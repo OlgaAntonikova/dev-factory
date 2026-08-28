@@ -66,7 +66,7 @@ is the project's; the meaning is fixed here. Rules the hooks enforce are marked.
 | ID | Meaning | Enforced |
 |---|---|---|
 | `RULE-INSTALLS` | The agent installs nothing — no SDK, tool, template, workload or package. It emits a checklist (program + exact version + install command) and waits. The first move in a project is that checklist, not code | hook |
-| `RULE-GIT` | The agent may `add`, `commit`, `restore`, `stash`. It never pushes, never creates or edits a remote, never rewrites history, never bypasses hooks | hook |
+| `RULE-GIT` | Each phase gets its own branch, `phase/<n>`. The agent works there: `add`, `commit`, `restore`, `stash`, and `push` **to that branch only**. It never commits on `main`/`master`, never pushes anywhere else, never force-pushes, never creates or edits a remote, never rewrites history, never bypasses hooks. Merging into the mainline is the owner's | hook |
 | `RULE-DEPENDENCIES` | Dependency versions live in exactly one declared file and are added only after the owner approves a "package + version" list. Never through a package manager's install command | hook |
 | `RULE-GREEN` | A session never ends with a broken build or red tests | hook |
 | `RULE-PHASE-GATE` | Each phase leaves the project buildable and runnable, and ends with: summary, `git diff --stat`, what is now demonstrable, the `DECISIONS.md` delta, open questions — then **waits for approval**. Phases are never chained. A broken environment is reported, never designed around | skill |
@@ -88,6 +88,42 @@ one of them was green. Every one of them was found only because somebody went lo
 
 Mutating the line a test is named for is the cheapest way to ask "would this notice?", and the
 answer is written down rather than assumed.
+
+### The phase branch
+
+`RULE-GIT` opened as "the agent never pushes". That was the safe reading while there was one
+branch and one person, and it stops being workable the moment a phase should arrive as a pull
+request: a pull request needs a branch on the remote, and a rule that forbids all pushing
+forbids that.
+
+So the permission is scoped rather than removed. `phase/<n>` is the agent's; everything else is
+not:
+
+| | |
+|---|---|
+| `git push` while on `phase/<n>`, or naming it | allowed |
+| Creating or switching to any branch | allowed - see below |
+| `git push` naming any other branch, or from one | blocked |
+| `git push --force`, `--force-with-lease`, `+refspec`, `--all`, `--mirror`, `--tags`, `--delete` | blocked |
+| `git commit` while on `main` or `master` | blocked |
+| `git branch -d/-D/-m`, `git remote`, `rebase`, `reset --hard`, `--amend` | blocked |
+
+**The branch is `phase/<n>`, optionally with a readable suffix:** `phase/8` and
+`phase/8-polish` both qualify, `phase/finish` does not. The number is required, because it is
+what ties the branch to a `PHASE-n` block in the spec; the suffix exists so that a list of
+branches can be read.
+
+**Creating branches is not restricted.** Any branch may be created and switched to. That is
+deliberate rather than an omission: a scratch branch is harmless, since it cannot be pushed and
+a commit on it does not touch the mainline. Restricting creation would add a rule that prevents
+nothing.
+
+The teeth are on **commit** and **push**, not on navigation. Blocking `checkout` would be a rule
+against moving around, easy to trip over and easy to work around; blocking a commit on the
+mainline is the thing actually worth preventing, and there is only one way to do it.
+
+`--force-with-lease` is blocked along with `--force`. It is the safer of the two, and it still
+replaces a commit somebody may have already read - which is the owner's call, not the agent's.
 
 ### Why `RULE-REVIEW` is core, and what the hook can actually prove
 

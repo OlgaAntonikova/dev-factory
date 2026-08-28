@@ -132,7 +132,13 @@ class GuardTheLawThatNeverDependsOnTheStack(unittest.TestCase):
         self.assertEqual(ALLOW, self.guard("git diff --stat"))
 
     def test_the_agent_may_not_publish_or_rewrite(self):
-        for command in ("git push", "git remote add origin x", "git rebase -i HEAD~2",
+        # `git push` is deliberately absent here. Under RULE-GIT variant B it is conditional -
+        # allowed onto a phase branch, blocked everywhere else - so asserting it in this list
+        # would pass for the wrong reason: these temp directories are not git repositories, so
+        # the guard blocks the push for having an undeterminable destination rather than for
+        # the reason this test is named after. tests/test_git_rules.py covers push properly,
+        # against a real repository on a known branch.
+        for command in ("git remote add origin x", "git rebase -i HEAD~2",
                         "git commit --amend", "git commit --no-verify -m x", "gh pr create"):
             self.assertEqual(BLOCK, self.guard(command), command)
 

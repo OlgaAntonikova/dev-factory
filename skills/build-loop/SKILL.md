@@ -46,6 +46,8 @@ Determinism rule for any tooling you build along the way: pinned model/tool vers
 
 ### 4. Record
 
+- **A phase gets a branch: `phase/<n>`, created before the first commit of the phase.** A
+  readable suffix is allowed - `phase/8-polish` - but the number is not optional. The mainline is never committed to directly; merging is the owner's. The agent may push that branch and nothing else (`RULE-GIT`).
 - One logical change per commit, Conventional Commits. Who executes git is set by the project protocol: if the spec reserves git to the user, prepare the exact commands and the commit message instead of running them.
 - Local CI parity before every commit: build → test → format/lint verify. If CI runs it, you run it locally first.
 

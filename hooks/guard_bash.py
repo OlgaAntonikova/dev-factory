@@ -15,6 +15,7 @@ open on malformed hook input so that a bug here never bricks a session.
 """
 import json
 import re
+import subprocess
 import sys
 
 import factory_config as cfg
@@ -190,24 +191,131 @@ if re.search(r"\bdotnet\s+(workload\s+(install|update)|new\s+(install|--install|
     )
 
 
-# --- RULE-GIT: the agent commits, the owner publishes ---------------------------------------
+# --- RULE-GIT: the phase branch is the agent's, the mainline is not -------------------------
+#
+# The agent works on `phase/<n>` and may push it. Everything else - the mainline, other
+# branches, force, remotes, history - stays with the owner.
+#
+# The teeth are on commit and push, not on navigation. A rule against `checkout` would be a
+# rule against moving around: easy to trip over, easy to work around, and it does not prevent
+# the thing worth preventing. A commit on the mainline has exactly one way in, and this is it.
+
 GIT_READONLY = {
     "status", "diff", "log", "show", "blame", "rev-parse",
     "ls-files", "shortlog", "describe", "grep", "help", "var",
 }
 GIT_WRITE_ALLOWED = {"add", "commit", "restore", "stash"}
-GIT_ALLOWED = GIT_READONLY | GIT_WRITE_ALLOWED
+GIT_NAVIGATION = {"branch", "checkout", "switch"}
+GIT_CONDITIONAL = {"push"}
+GIT_ALLOWED = GIT_READONLY | GIT_WRITE_ALLOWED | GIT_NAVIGATION | GIT_CONDITIONAL
 
-for match in re.finditer(r"\bgit\s+(?:-[^\s]+\s+)*([a-z][a-z-]*)", cmd):
+#: `phase/8` and `phase/8-polish`, but not `phase/finish`. The number is required because
+#: it is what ties the branch to a `PHASE-n` block in the spec; the suffix is for readers.
+PHASE_BRANCH = re.compile(r"^phase/\d+(-[a-z0-9-]+)?$")
+MAINLINE = {"main", "master"}
+
+#: Flags that push more than one branch, or replace what is already published.
+PUSH_BANNED_FLAGS = re.compile(
+    r"(?:^|\s)(--force\b|--force-with-lease\b|-f\b|--all\b|--mirror\b|--tags\b"
+    r"|--delete\b|-d\b|--prune\b)"
+)
+
+
+def current_branch(root):
+    """The checked-out branch, or None when git cannot say."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=root, capture_output=True, text=True,
+        )
+    except (OSError, ValueError):
+        return None
+
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def push_destination(arguments):
+    """
+    The branch a push would land on, as far as the command line says it.
+
+    Returns the destination name, or None when the command names none - in which case the
+    destination is whatever branch is checked out, and the caller asks git.
+    """
+    tokens = [token for token in arguments.split() if not token.startswith("-")]
+
+    # `git push <remote> <refspec>`: the refspec is the last token, and a colon means
+    # "source:destination", where only the destination matters.
+    if len(tokens) >= 2:
+        refspec = tokens[-1]
+
+        # No lstrip("+") here: a '+' token is a force push and was blocked above, so it can
+        # never reach this line. Stripping it would only hide it.
+        return refspec.split(":")[-1]
+
+    return None
+
+
+root = cfg.project_root(data)
+
+for match in re.finditer(r"\bgit\s+(?:-[^\s]+\s+)*([a-z][a-z-]*)([^\n;&|]*)", cmd):
     subcommand = match.group(1)
+    arguments = match.group(2) or ""
 
     if subcommand not in GIT_ALLOWED:
         block(
             f"Blocked by RULE-GIT: 'git {subcommand}' is the owner's. "
-            f"The agent may run: {', '.join(sorted(GIT_ALLOWED))}. "
-            "Push, remote, branch and history operations are not the agent's - report what you "
-            "committed and let the owner push."
+            f"The agent may run: {', '.join(sorted(GIT_ALLOWED))}, and push only to a phase "
+            "branch. Remotes, history and the mainline are not the agent's."
         )
+
+    if subcommand == "commit":
+        branch = current_branch(root)
+
+        if branch in MAINLINE:
+            block(
+                f"Blocked by RULE-GIT: this is a commit on '{branch}'. Work happens on a phase "
+                "branch - create `phase/<n>` and commit there. Merging into the mainline is the "
+                "owner's."
+            )
+
+    if subcommand == "branch" and re.search(r"(?:^|\s)-(?:[dDm]\b|-delete\b|-move\b)", arguments):
+        block(
+            "Blocked by RULE-GIT: deleting or renaming a branch is the owner's. Leave the "
+            "branch and say what should happen to it."
+        )
+
+    if subcommand == "push":
+        # A refspec beginning with '+' is a force push with no flag to notice. The first
+        # version of this guard checked the flags and then stripped the '+' while working out
+        # the destination, so `git push origin +phase/3` read as an ordinary push to a phase
+        # branch and was allowed.
+        forced_refspec = any(
+            token.startswith("+") for token in arguments.split() if not token.startswith("-")
+        )
+
+        if forced_refspec or PUSH_BANNED_FLAGS.search(arguments):
+            block(
+                "Blocked by RULE-GIT: this push replaces or bulk-publishes rather than adding "
+                "to one branch. Force, --all, --mirror, --tags and --delete are the owner's - "
+                "including --force-with-lease, which is safer and still rewrites what somebody "
+                "may already have read."
+            )
+
+        destination = push_destination(arguments) or current_branch(root)
+
+        if destination is None:
+            block(
+                "Blocked by RULE-GIT: cannot tell which branch this push would land on, and a "
+                "push whose destination is unknown is not one the agent may make. Name the "
+                "branch: `git push origin phase/<n>`."
+            )
+
+        if not PHASE_BRANCH.match(destination):
+            block(
+                f"Blocked by RULE-GIT: '{destination}' is not a phase branch. The agent pushes "
+                "`phase/<n>` and nothing else; the mainline and every other branch are the "
+                "owner's."
+            )
 
 # Flag-level bans the subcommand allowlist cannot express.
 if re.search(r"\bgit\b[^\n;&|]*--amend\b", cmd):
