@@ -219,6 +219,78 @@ class MarkDirty(unittest.TestCase):
             self.assertTrue(os.path.exists(self.marker(root)))
 
 
+class MultiRootSessions(unittest.TestCase):
+    """A session is not always anchored in the repository it edits. The session that surfaced
+    this was anchored in the home directory and edited two repositories in one sitting; the
+    old single-root gate then demanded a stack declaration from the home directory."""
+
+    def registry(self, anchor):
+        return os.path.join(anchor, ".claude", ".build-dirty")
+
+    def test_an_edit_arms_the_repository_it_belongs_to_not_the_anchor(self):
+        repo_config = dict(NODE, sourceExtensions=[".ts"])
+
+        with TempProject(None) as anchor, TempProject(repo_config) as repo:
+            edited = os.path.join(repo, "src", "app.ts")
+            run_hook("mark_dirty.py",
+                     {"tool_name": "Edit", "tool_input": {"file_path": edited}}, anchor)
+
+            with open(self.registry(anchor), encoding="utf-8") as handle:
+                listed = [line.strip() for line in handle if line.strip()]
+
+            self.assertEqual([os.path.abspath(repo)], listed)
+
+    def test_the_gate_checks_the_listed_repository_and_ignores_the_anchor(self):
+        # The anchor has no declaration at all; that must not block, because nothing in the
+        # anchor was edited - the listed repository is what gets proven.
+        with TempProject(None) as anchor, \
+                TempProject({"version": 1, "build": OK_COMMAND, "test": OK_COMMAND}) as repo:
+            os.makedirs(os.path.join(anchor, ".claude"), exist_ok=True)
+            with open(self.registry(anchor), "w", encoding="utf-8") as handle:
+                handle.write(repo + "\n")
+
+            code, stderr = run_hook("stop_gate.py", {}, anchor)
+
+            self.assertEqual(ALLOW, code, stderr)
+            self.assertFalse(os.path.exists(self.registry(anchor)))
+
+    def test_a_broken_listed_repository_blocks_and_is_named(self):
+        with TempProject(None) as anchor, \
+                TempProject({"version": 1, "build": FAILING_COMMAND, "test": OK_COMMAND}) as repo:
+            os.makedirs(os.path.join(anchor, ".claude"), exist_ok=True)
+            with open(self.registry(anchor), "w", encoding="utf-8") as handle:
+                handle.write(repo + "\n")
+
+            code, stderr = run_hook("stop_gate.py", {}, anchor)
+
+        self.assertEqual(BLOCK, code)
+        self.assertIn(os.path.abspath(repo), stderr)
+
+    def test_every_listed_repository_is_gated_not_just_the_first(self):
+        green = {"version": 1, "build": OK_COMMAND, "test": OK_COMMAND}
+        red = {"version": 1, "build": FAILING_COMMAND, "test": OK_COMMAND}
+
+        with TempProject(None) as anchor, TempProject(green) as first, TempProject(red) as second:
+            os.makedirs(os.path.join(anchor, ".claude"), exist_ok=True)
+            with open(self.registry(anchor), "w", encoding="utf-8") as handle:
+                handle.write(first + "\n" + second + "\n")
+
+            code, stderr = run_hook("stop_gate.py", {}, anchor)
+
+        self.assertEqual(BLOCK, code)
+        self.assertIn(os.path.abspath(second), stderr)
+
+    def test_the_pre_multi_root_empty_marker_still_gates_the_anchor(self):
+        with TempProject(None) as anchor:
+            os.makedirs(os.path.join(anchor, ".claude"), exist_ok=True)
+            open(self.registry(anchor), "w").close()
+
+            code, stderr = run_hook("stop_gate.py", {}, anchor)
+
+        self.assertEqual(BLOCK, code)
+        self.assertIn(".dev-factory.json", stderr)
+
+
 class StopGate(unittest.TestCase):
     def arm(self, root):
         os.makedirs(os.path.join(root, ".claude"), exist_ok=True)

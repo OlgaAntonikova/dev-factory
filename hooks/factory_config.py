@@ -40,8 +40,60 @@ STARTER = """{
 
 
 def project_root(data: dict) -> str:
-    """The repository being worked on, however the hook was invoked."""
+    """The session's anchor directory, however the hook was invoked."""
     return os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd") or "."
+
+
+def file_root(path: str, fallback: str) -> str:
+    """The repository an edited file belongs to: the nearest ancestor directory holding a
+    .dev-factory.json or a .git. A session is not always anchored in the repository it edits
+    (the session that surfaced this was anchored in the home directory and edited two
+    repositories), so the file's own ancestry outranks the session anchor. Falls back to the
+    anchor when no marker is found up the tree."""
+    directory = os.path.dirname(os.path.abspath(os.path.join(fallback, path)))
+
+    while True:
+        if (os.path.exists(os.path.join(directory, CONFIG_NAME))
+                or os.path.exists(os.path.join(directory, ".git"))):
+            return directory
+
+        parent = os.path.dirname(directory)
+        if parent == directory:
+            return fallback
+        directory = parent
+
+
+def dirty_registry(anchor: str) -> str:
+    """The marker file. It lists the dirty repository roots, one absolute path per line; an
+    empty file (the pre-multi-root format) means the anchor itself is dirty."""
+    return os.path.join(anchor, ".claude", ".build-dirty")
+
+
+def read_dirty_roots(anchor: str):
+    path = dirty_registry(anchor)
+
+    if not os.path.exists(path):
+        return []
+
+    try:
+        with open(path, encoding="utf-8") as handle:
+            listed = [line.strip() for line in handle if line.strip()]
+    except OSError:
+        listed = []
+
+    return listed or [anchor]
+
+
+def add_dirty_root(anchor: str, root: str) -> None:
+    root = os.path.abspath(root)
+
+    if root in read_dirty_roots(anchor):
+        return
+
+    os.makedirs(os.path.dirname(dirty_registry(anchor)), exist_ok=True)
+
+    with open(dirty_registry(anchor), "a", encoding="utf-8") as handle:
+        handle.write(root + "\n")
 
 
 def load(root: str):

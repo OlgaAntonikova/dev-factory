@@ -57,12 +57,18 @@ try:
 except Exception:
     sys.exit(0)
 
-root = cfg.project_root(data)
+anchor = cfg.project_root(data)
+
+# The repository the EDIT belongs to, not the one the session happens to be anchored in - a
+# session anchored outside the repository it edits (home directory, a workspace of several
+# repos) would otherwise arm a gate that checks the wrong root, or none. Bash commands carry
+# no file path, so they fall back to the anchor.
+file_path = (data.get("tool_input") or {}).get("file_path") or ""
+root = cfg.file_root(file_path, anchor) if data.get("tool_name") in EDIT_TOOLS else anchor
+
 config, _ = cfg.load(root)  # a missing or broken config is the stop gate's business, not ours
 
 if marks_source(data, cfg.source_extensions(config)):
-    marker_dir = os.path.join(root, ".claude")
-    os.makedirs(marker_dir, exist_ok=True)
-    open(os.path.join(marker_dir, ".build-dirty"), "w").close()
+    cfg.add_dirty_root(anchor, root)
 
 sys.exit(0)

@@ -29,10 +29,10 @@ except Exception:
 if data.get("stop_hook_active"):
     sys.exit(0)
 
-root = cfg.project_root(data)
-marker = os.path.join(root, ".claude", ".build-dirty")
+anchor = cfg.project_root(data)
+roots = cfg.read_dirty_roots(anchor)
 
-if not os.path.exists(marker):
+if not roots:
     sys.exit(0)  # nothing was edited, so there is nothing to prove
 
 
@@ -41,26 +41,7 @@ def block(message: str) -> None:
     sys.exit(2)
 
 
-config, problem = cfg.load(root)
-
-if problem:
-    # Deliberately a block and not a skip. A gate that cannot find its build command knows
-    # nothing about the state of the project, and reporting nothing is indistinguishable from
-    # reporting success. Source files were edited this session; something must prove they
-    # still compile.
-    hint = cfg.suggestion(root)
-
-    block(
-        "STOP GATE: this session edited source files and the stack is not declared.\n"
-        f"{problem}\n\n"
-        f"Write {cfg.CONFIG_NAME} in the repository root:\n{cfg.STARTER}\n"
-        + (f"\n{hint}\n" if hint else "")
-        + "\nCommands are argv arrays, not shell strings. Ask the owner to confirm them, "
-        "then finish again."
-    )
-
-
-def run(argv):
+def run(argv, root):
     try:
         proc = subprocess.run(argv, cwd=root, capture_output=True, text=True)
     except (OSError, ValueError) as error:
@@ -69,13 +50,13 @@ def run(argv):
     return proc.returncode, (proc.stdout + "\n" + proc.stderr).strip()
 
 
-def gate(argv, what):
-    code, output = run(argv)
+def gate(argv, what, root):
+    code, output = run(argv, root)
     printed = " ".join(argv)
 
     if code is None:
         block(
-            f"STOP GATE: the {what} command could not run.\n{output}\n"
+            f"STOP GATE: the {what} command could not run in {root}.\n{output}\n"
             f"Check the \"{what}\" entry in {cfg.CONFIG_NAME}."
         )
 
@@ -83,16 +64,38 @@ def gate(argv, what):
         tail = "\n".join(output.splitlines()[-TAIL_LINES:])
 
         block(
-            f"STOP GATE: `{printed}` failed - the session cannot end with a broken {what}.\n"
-            f"{tail}\n\nFix it, then finish again."
+            f"STOP GATE: `{printed}` failed in {root} - the session cannot end with a "
+            f"broken {what}.\n{tail}\n\nFix it, then finish again."
         )
 
 
-gate(cfg.command(config, "build"), "build")
+# Every repository this session dirtied is gated; one session may edit several (the session
+# that surfaced this edited the plugin and an application in the same sitting).
+for root in roots:
+    config, problem = cfg.load(root)
 
-# fastTest exists for suites too slow to run on every stop. It is a narrower check by
-# definition, so the phase gate still runs the full suite - see RULE-PHASE-GATE.
-gate(cfg.command(config, "fastTest", fallback="test"), "test")
+    if problem:
+        # Deliberately a block and not a skip. A gate that cannot find its build command knows
+        # nothing about the state of the project, and reporting nothing is indistinguishable
+        # from reporting success. Source files were edited this session; something must prove
+        # they still compile.
+        hint = cfg.suggestion(root)
 
-os.remove(marker)
+        block(
+            f"STOP GATE: this session edited source files in {root} and that repository's "
+            "stack is not declared.\n"
+            f"{problem}\n\n"
+            f"Write {cfg.CONFIG_NAME} in that repository's root:\n{cfg.STARTER}\n"
+            + (f"\n{hint}\n" if hint else "")
+            + "\nCommands are argv arrays, not shell strings. Ask the owner to confirm them, "
+            "then finish again."
+        )
+
+    gate(cfg.command(config, "build"), "build", root)
+
+    # fastTest exists for suites too slow to run on every stop. It is a narrower check by
+    # definition, so the phase gate still runs the full suite - see RULE-PHASE-GATE.
+    gate(cfg.command(config, "fastTest", fallback="test"), "test", root)
+
+os.remove(cfg.dirty_registry(anchor))
 sys.exit(0)
