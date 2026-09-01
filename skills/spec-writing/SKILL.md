@@ -83,9 +83,12 @@ every other component greps for them:
 | Limitations | `L-n` | a table row, echoed in the README |
 | Open questions | `Q-n` | a table row, closed in place |
 
-Identifiers are ASCII even when the prose is not, so that a spec in any language stays
-greppable. Each phase block carries the English anchors **`Deliverables:`** and **`Gate:`** for
-the same reason — the prose around them may be in any language.
+All prose is English — `RULE-ENGLISH-ONLY` is core and covers every repository artifact: the
+spec, decision and review records, README, code comments and docstrings, commit messages,
+config comments. The sole exception is user-facing localized content shipped as data (l10n
+files, seeded content). Identifiers are ASCII and each phase block carries the anchors
+**`Deliverables:`** and **`Gate:`**, because the plugin greps for anchors and identifiers,
+never headings.
 
 Identifiers are never renumbered and never reused. A retired rule is struck through where it
 stands, with the reason and the date.

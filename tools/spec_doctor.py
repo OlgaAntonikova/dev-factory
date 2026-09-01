@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """spec-doctor - checks a repository against CONTRACT.md.
 
 Mechanical, all of it. Every finding names the file and the missing identifier, because a
@@ -45,7 +45,18 @@ CORE_RULES = [
     "RULE-NO-MAGIC-NUMBERS",
     "RULE-BUILD-HYGIENE",
     "RULE-BRIEF",
+    "RULE-ENGLISH-ONLY",
 ]
+
+#: RULE-ENGLISH-ONLY, the mechanical part. The doctor checks the required documents; text in
+#: code comments, commit messages and everything else is the reviewer's to catch — a script
+#: that tried to judge "is this English?" in arbitrary source would be guessing. Cyrillic is
+#: what the rule has actually been broken with, so Cyrillic is what is detected; precise
+#: beats broad here (a Latin-alphabet non-English sentence is invisible to this check, and
+#: the contract says so rather than pretending otherwise).
+NON_ENGLISH = re.compile(r"[Ѐ-ӿ]")
+
+ENGLISH_ONLY_DOCS = ["docs/SPEC.md", "DECISIONS.md", "NEEDS_REVIEW.md", "README.md"]
 
 #: CONTRACT.md section 5. English anchors so a spec in any language stays greppable.
 PHASE_ANCHORS = ["Deliverables:", "Gate:"]
@@ -142,6 +153,26 @@ def check_core_rules(root, report):
                     "(CONTRACT.md section 3 requires every core rule by identifier)")
     else:
         report.ok("core rules", f"all {len(CORE_RULES)} present in docs/SPEC.md")
+
+
+def check_english_only(root, report):
+    """RULE-ENGLISH-ONLY over the required documents. Every hit names the file and the line."""
+    hits = []
+
+    for relative in ENGLISH_ONLY_DOCS:
+        text = repo_scan.read_text(root, relative)
+
+        for number, line in enumerate(text.splitlines(), start=1):
+            if NON_ENGLISH.search(line):
+                hits.append(f"{relative}:{number}")
+
+    if hits:
+        shown = ", ".join(hits[:5]) + (f" (+{len(hits) - 5} more)" if len(hits) > 5 else "")
+        report.fail("english only",
+                    f"non-English text at {shown} (RULE-ENGLISH-ONLY: repository "
+                    "artifacts are written in English)")
+    else:
+        report.ok("english only", f"no non-English text in {len(ENGLISH_ONLY_DOCS)} documents")
 
 
 def check_families_present(root, report, definitions):
@@ -262,6 +293,7 @@ def main(argv=None):
         definitions, references = repo_scan.identifier_sites(root)
 
         check_core_rules(root, report)
+        check_english_only(root, report)
         check_families_present(root, report, definitions)
         check_phase_anchors(root, report)
         check_no_duplicate_definitions(report, definitions)

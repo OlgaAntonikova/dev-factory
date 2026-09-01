@@ -17,34 +17,35 @@ Applicability rule: skip items whose subject does not exist in the project (no d
 4. **Generated content gate** — nothing generated (content, config variations, migrations produced by tooling) enters the mainline without an explicit accept artifact. No auto-merge.
 5. **Reserved actions untouched** — if the project protocol reserves actions to the user (installs, git, deploys), the change was produced without the agent performing them; checklists and ready-to-run commands were handed over instead.
 6. **Build hygiene intact** — warnings-as-errors and nullable settings untouched; no suppressions added without an ADR-grade justification in the diff.
+7. **English only (`RULE-ENGLISH-ONLY`)** — no non-English text introduced anywhere in the diff: docs, code comments, docstrings, commit messages, config comments, test names. The sole exception is user-facing localized content shipped as data (l10n resource files, seeded content). `spec-doctor` scans only the required documents, so the reviewer is the enforcement for everything else.
 
 ## Level 2 — Spec conformance
 
-7. The change implements the referenced spec section **as written**. Deviations are either (a) recorded in `DECISIONS.md`, or (b) a question that should have been asked. Silent defaults on ambiguous spec points are findings.
-8. **Tests match the spec's matrices** — every row of the relevant input/verdict table is present as a test case; the standard edge rows (empty, whitespace, oversized, mixed-script) exist.
-9. **Negative tests exist for validators** — the diff proves each new check can fail on a deliberately broken input.
-10. **Named hard classes** meet their coverage bar; performance-critical paths keep their benchmark gates green (the numbers, not just "it ran").
+8. The change implements the referenced spec section **as written**. Deviations are either (a) recorded in `DECISIONS.md`, or (b) a question that should have been asked. Silent defaults on ambiguous spec points are findings.
+9. **Tests match the spec's matrices** — every row of the relevant input/verdict table is present as a test case; the standard edge rows (empty, whitespace, oversized, mixed-script) exist.
+10. **Negative tests exist for validators** — the diff proves each new check can fail on a deliberately broken input.
+11. **Named hard classes** meet their coverage bar; performance-critical paths keep their benchmark gates green (the numbers, not just "it ran").
 
 ## Level 3 — Data and correctness properties
 
-11. **Non-trivial queries carry their plan** (projects with a database) — `EXPLAIN (ANALYZE, BUFFERS)` output in a comment above the query; the plan actually uses the intended index.
-12. **Idempotency** where the spec requires it (client-generated IDs, retried imports): replaying the same operation is a no-op, and a test shows it.
-13. **Transactionality** — multi-step imports/migrations are atomic; a mid-failure leaves no partial state.
-14. **Determinism of tooling** — pinned versions, sorted output; re-running produces identical bytes.
-15. **Unit and coordinate discipline** — the internal model uses the spec's canonical units (mm, cents, seconds); conversion to display/output units happens in exactly one designated place; no magic constants scattered through the code.
+12. **Non-trivial queries carry their plan** (projects with a database) — `EXPLAIN (ANALYZE, BUFFERS)` output in a comment above the query; the plan actually uses the intended index.
+13. **Idempotency** where the spec requires it (client-generated IDs, retried imports): replaying the same operation is a no-op, and a test shows it.
+14. **Transactionality** — multi-step imports/migrations are atomic; a mid-failure leaves no partial state.
+15. **Determinism of tooling** — pinned versions, sorted output; re-running produces identical bytes.
+16. **Unit and coordinate discipline** — the internal model uses the spec's canonical units (mm, cents, seconds); conversion to display/output units happens in exactly one designated place; no magic constants scattered through the code.
 
 ## Level 4 — Process and presentation
 
-16. Commits: Conventional Commits, one logical change each; no drive-by refactors buried in a feature commit.
-17. `DECISIONS.md` updated for every choice the spec did not dictate; `NEEDS_REVIEW.md` current.
-18. If UI is touched — verify against the spec's UI constraint list. Mobile-first projects: tap targets ≥ 44 px, safe-area insets respected, keyboard does not cover inputs. Desktop canvas apps: zoom anchored to the cursor, correct DPI scaling, state changes re-render without recreating the document. Both: theming via variables, not hardcoded colors.
-19. Docs that the spec designates as deliverables (ADRs, README sections, honest-limitations table) exist and are updated by the same diff, not "later".
+17. Commits: Conventional Commits, one logical change each; no drive-by refactors buried in a feature commit.
+18. `DECISIONS.md` updated for every choice the spec did not dictate; `NEEDS_REVIEW.md` current.
+19. If UI is touched — verify against the spec's UI constraint list. Mobile-first projects: tap targets ≥ 44 px, safe-area insets respected, keyboard does not cover inputs. Desktop canvas apps: zoom anchored to the cursor, correct DPI scaling, state changes re-render without recreating the document. Both: theming via variables, not hardcoded colors.
+20. Docs that the spec designates as deliverables (ADRs, README sections, honest-limitations table) exist and are updated by the same diff, not "later".
 
 ## Verdict format
 
 End every review with exactly one of:
 
 - **APPROVE** — optionally with non-blocking nits, each tagged `nit:`.
-- **BLOCK** — a numbered list of findings; each finding cites the checklist item number, the file/line, and the rule or invariant identifier it violates. No vague findings: "step 4 query has no EXPLAIN comment (item 11, `WordFormRepository.cs:41`, PLAN §7)" — not "SQL could be better documented".
+- **BLOCK** — a numbered list of findings; each finding cites the checklist item number, the file/line, and the rule or invariant identifier it violates. No vague findings: "step 4 query has no EXPLAIN comment (item 12, `WordFormRepository.cs:41`, PLAN §7)" — not "SQL could be better documented".
 
 A review that ends in prose without a verdict is not a review.

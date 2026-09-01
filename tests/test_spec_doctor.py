@@ -149,6 +149,43 @@ class MissingPieces(unittest.TestCase):
         self.assertIn("PHASE", output)
 
 
+class EnglishOnly(unittest.TestCase):
+    def test_a_missing_english_only_rule_is_named(self):
+        without = [r for r in spec_doctor.CORE_RULES if r != "RULE-ENGLISH-ONLY"]
+
+        with Repo(**{"docs/SPEC.md": spec_text(rules=without)}) as root:
+            code, output = doctor(root, "--no-run")
+
+        self.assertEqual(1, code)
+        self.assertIn("RULE-ENGLISH-ONLY", output)
+
+    def test_non_english_text_in_the_spec_is_named_with_its_line(self):
+        spec = spec_text() + "\nЭто предложение нарушает правило.\n"
+
+        with Repo(**{"docs/SPEC.md": spec}) as root:
+            code, output = doctor(root, "--no-run")
+
+        self.assertEqual(1, code)
+        self.assertIn("docs/SPEC.md:", output)
+        self.assertIn("RULE-ENGLISH-ONLY", output)
+
+    def test_non_english_text_in_a_decision_record_is_caught(self):
+        decisions = "# Decisions\n\n### D-001 - the first one\n\nПотому что так решили.\n"
+
+        with Repo(**{"DECISIONS.md": decisions}) as root:
+            code, output = doctor(root, "--no-run")
+
+        self.assertEqual(1, code)
+        self.assertIn("DECISIONS.md:", output)
+
+    def test_an_all_english_repository_passes(self):
+        with Repo() as root:
+            code, output = doctor(root, "--no-run")
+
+        self.assertEqual(0, code, output)
+        self.assertIn("english only", output)
+
+
 class TheStackDeclaration(unittest.TestCase):
     def test_a_failing_build_is_reported(self):
         config = json.dumps({"version": 1, "build": FAILING_COMMAND, "test": OK_COMMAND})

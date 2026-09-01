@@ -18,9 +18,11 @@ citation silently points at the wrong thing, with nothing failing.
 So: **every referenceable thing has an ID that appears literally in the text.** Sections may
 be numbered, renumbered or unnumbered; the plugin never looks at a number. It greps for an ID.
 
-The same reasoning makes the contract **language-neutral**. The prose of a spec may be in any
-language — the first project's is in Russian — so the contract keys on ASCII identifiers and a
-handful of English keyword anchors, never on headings.
+The same reasoning keeps the contract keyed on ASCII identifiers and a handful of English
+keyword anchors, never on headings. Identifier-keying is robust against any prose — and the
+prose itself is governed by `RULE-ENGLISH-ONLY`: every repository artifact is written in
+English. (The first project predates that rule and its spec is in Russian; it is the reason
+the rule exists as a named core rule rather than an assumption.)
 
 ---
 
@@ -77,6 +79,7 @@ is the project's; the meaning is fixed here. Rules the hooks enforce are marked.
 | `RULE-NO-MAGIC-NUMBERS` | Every constant is named, and carries its unit in its name where it has one | skill |
 | `RULE-BUILD-HYGIENE` | Warnings are errors and the formatter is authoritative. Neither is ever weakened to get green; a suppression carries a recorded reason | hook + skill |
 | `RULE-BRIEF` | Reports are the changed files and a short summary, not a wall of text | — |
+| `RULE-ENGLISH-ONLY` | Every repository artifact is written in English: the spec and all docs, code comments and docstrings, commit messages, branch names, configuration comments, decision and review records. The sole exception is user-facing localized content shipped as **data** (l10n resource files, seeded content). Conversation with the owner may be in any language; the repository may not | doctor + skill |
 
 ### Why `RULE-MUTATION-PROOF` is core
 
@@ -88,6 +91,17 @@ one of them was green. Every one of them was found only because somebody went lo
 
 Mutating the line a test is named for is the cheapest way to ask "would this notice?", and the
 answer is written down rather than assumed.
+
+### Why `RULE-ENGLISH-ONLY` is core
+
+A repository is shown to people. The first project shipped commits, docs and code comments in
+Russian, and the owner's verdict was that none of it could be shown to anyone. The rule was
+then stated once per project and forgotten once per project — which is exactly the kind of
+lesson this contract exists to hold. So it is core: `spec-doctor` checks the required
+documents for non-English text mechanically, and the reviewer blocks a diff that introduces it
+anywhere else (comments, commit messages, config). The one thing the rule does **not** cover
+is localized user-facing content shipped as data — a translation file is content, not an
+artifact of the process.
 
 ### The phase branch
 
@@ -178,13 +192,14 @@ something else.
 
 ## 5. Phase shape
 
-Each `PHASE-n` block carries three parts. Two of them are anchored by **English keywords**, so
-that a spec written in any language stays greppable:
+Each `PHASE-n` block carries three parts, two of them anchored by the **`Deliverables:`** and
+**`Gate:`** keywords (anchors are keyed on, never headings — and prose is English,
+`RULE-ENGLISH-ONLY`):
 
 ```
-### PHASE-4 — <title, any language>
+### PHASE-4 — <title>
 
-- <what: prose, any language>
+- <what: prose>
 - Deliverables: <list>
 - Gate: <the observable criterion that closes this phase>
 ```
