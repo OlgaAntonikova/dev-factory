@@ -1,0 +1,13 @@
+{
+  "name": "dev-factory",
+  "owner": {
+    "name": "Lyoli"
+  },
+  "plugins": [
+    {
+      "name": "dev-factory",
+      "source": "./",
+      "description": "A development process as an installable plugin: knowledge in skills, law in hooks, roles in agents. Stack-independent; each repository declares its own build and test commands in .dev-factory.json."
+    }
+  ]
+}
