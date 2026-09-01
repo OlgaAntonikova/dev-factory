@@ -181,6 +181,25 @@ class TheGate(unittest.TestCase):
 
         self.assertEqual(ALLOW, proc.returncode)
 
+    def test_a_diff_with_non_ascii_content_stamps_and_verifies(self):
+        # Found live on Windows: the first real diff containing an arrow character raised
+        # UnicodeDecodeError under text=True (cp1252), so the stamp silently failed AND the
+        # hook failed open - a commit landed with no working verdict check. The diff encoding
+        # is pinned to UTF-8 now; this test stages exactly that kind of content.
+        with GitRepo() as root:
+            with open(os.path.join(root, "src.txt"), "w", encoding="utf-8") as handle:
+                # The payload must contain a byte cp1252 cannot decode at all (0x81, 0x8D,
+                # 0x8F, 0x90 or 0x9D as a UTF-8 continuation byte): “smart quotes” (0x9D in
+                # U+201D) and Cyrillic Н (0x9D in U+041D) are the real-world carriers.
+                handle.write("Норма ↑ and a “quoted” value\n")
+            git(root, "add", "src.txt")
+
+            code, output = stamp(root, "--approve", "--reviewer", "reviewer")
+            self.assertEqual(0, code, output)
+            self.assertIn("APPROVE recorded", output)
+
+            self.assertEqual(ALLOW, gate(commit(), root)[0])
+
     def test_stamping_with_nothing_staged_is_refused(self):
         # A verdict over an empty diff approves nothing while looking like an approval.
         with GitRepo(stage=False) as root:

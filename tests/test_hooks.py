@@ -212,11 +212,23 @@ class MarkDirty(unittest.TestCase):
             run_hook("mark_dirty.py", bash("sed -i 's/a/b/' src/app.ts"), root)
             self.assertTrue(os.path.exists(self.marker(root)))
 
-    def test_without_a_configuration_common_source_still_arms_it(self):
+    def test_without_a_configuration_common_source_still_arms_a_git_repository(self):
+        # No .dev-factory.json, but it IS a repository - the gate must arm (and then block on
+        # the missing declaration, which is the design).
         with TempProject(None) as root:
+            os.makedirs(os.path.join(root, ".git"))
             run_hook("mark_dirty.py",
                      {"tool_name": "Write", "tool_input": {"file_path": "src/main.rs"}}, root)
             self.assertTrue(os.path.exists(self.marker(root)))
+
+    def test_an_edit_belonging_to_no_repository_never_arms_the_gate(self):
+        # A config file in the home directory has no build to prove; arming the gate for it
+        # produces an unsatisfiable demand (found live: editing ~/.claude/launch.json blocked
+        # the session with "declare the stack of C:\Users\<name>").
+        with TempProject(None) as root:  # no .git, no .dev-factory.json anywhere up the tree
+            run_hook("mark_dirty.py",
+                     {"tool_name": "Write", "tool_input": {"file_path": "src/main.rs"}}, root)
+            self.assertFalse(os.path.exists(self.marker(root)))
 
 
 class MultiRootSessions(unittest.TestCase):

@@ -44,10 +44,14 @@ STAGES_EVERYTHING = re.compile(r"(?:^|\s)(--all(?=\s|$)|-[a-zA-Z]*a[a-zA-Z]*(?=\
 
 def staged_diff(root):
     """The staged diff, or None when this is not a git repository."""
+    # The encoding is pinned to UTF-8: git emits UTF-8 bytes, while text=True decodes with
+    # the platform default - cp1252 on Windows - which raised UnicodeDecodeError on the first
+    # real diff containing an arrow character, failing the stamp while the hook failed open.
+    # errors="replace" keeps the hash deterministic even for invalid bytes.
     try:
         proc = subprocess.run(
             ["git", "diff", "--cached", "--no-color"],
-            cwd=root, capture_output=True, text=True,
+            cwd=root, capture_output=True, encoding="utf-8", errors="replace",
         )
     except (OSError, ValueError):
         return None

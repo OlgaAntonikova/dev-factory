@@ -68,7 +68,10 @@ root = cfg.file_root(file_path, anchor) if data.get("tool_name") in EDIT_TOOLS e
 
 config, _ = cfg.load(root)  # a missing or broken config is the stop gate's business, not ours
 
-if marks_source(data, cfg.source_extensions(config)):
+# Only repositories are gated (a .git or a .dev-factory.json up the tree). An edit that
+# belongs to no repository - a config file in the home directory - has no build to prove, and
+# arming the gate for it produces an unsatisfiable block.
+if cfg.is_repository(root) and marks_source(data, cfg.source_extensions(config)):
     cfg.add_dirty_root(anchor, root)
 
 sys.exit(0)

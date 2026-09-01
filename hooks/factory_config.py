@@ -63,6 +63,15 @@ def file_root(path: str, fallback: str) -> str:
         directory = parent
 
 
+def is_repository(root: str) -> bool:
+    """A directory the stop gate can meaningfully gate: it declares a stack, or it is at least
+    a git repository that OUGHT to declare one. An edit belonging to neither (a config file in
+    the home directory, say) has no build to prove - arming the gate for it produces a demand
+    nobody can satisfy, which teaches people to silence gates."""
+    return (os.path.exists(os.path.join(root, CONFIG_NAME))
+            or os.path.exists(os.path.join(root, ".git")))
+
+
 def dirty_registry(anchor: str) -> str:
     """The marker file. It lists the dirty repository roots, one absolute path per line; an
     empty file (the pre-multi-root format) means the anchor itself is dirty."""

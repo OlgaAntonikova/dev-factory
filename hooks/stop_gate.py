@@ -42,8 +42,12 @@ def block(message: str) -> None:
 
 
 def run(argv, root):
+    # UTF-8 with replacement, not text=True: build/test output is tool-controlled bytes, and
+    # the platform default (cp1252 on Windows) turns one non-ASCII character into a crashed
+    # gate. Same lesson as review_gate.staged_diff.
     try:
-        proc = subprocess.run(argv, cwd=root, capture_output=True, text=True)
+        proc = subprocess.run(argv, cwd=root, capture_output=True,
+                              encoding="utf-8", errors="replace")
     except (OSError, ValueError) as error:
         return None, f"{argv[0]} could not be started: {error}"
 
