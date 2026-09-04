@@ -12,7 +12,7 @@ A new application is then: a new repository, this plugin installed, and a spec.
 
 ## Status
 
-**0.1.0 — under construction.** Extracted from a first project that ran nine phases under this
+**0.1.1 — under construction.** Extracted from a first project that ran nine phases under this
 process. What exists so far:
 
 | Piece | State |
@@ -26,7 +26,7 @@ process. What exists so far:
 | `agents/` | **moved in** — `reviewer` (opus), `scout` (haiku), `verifier` (opus) |
 | Migration of the first project onto the contract | **done** — `spec-doctor` green, reviewed to APPROVE |
 
-48 tests, and every guard in them has been mutated and watched to fail. See `ROADMAP.md`.
+104 tests, and every guard in them has been mutated and watched to fail. See `ROADMAP.md`.
 
 ## Requirements
 
@@ -90,6 +90,20 @@ reproduce.
 Project-specific knowledge that used to live in a local agent belongs in the `notes` field of
 `.dev-factory.json`: which flag turns a test run into a silent no-op, which build mode skips a
 compilation step. The plugin's agents are told to read it.
+
+## Release hygiene: the version is the cache key
+
+Installed plugins are cached per version under `~/.claude/plugins/cache`. A development
+install runs straight from this repository, and nothing refreshes the cached copy of the
+*same* version when source files change — the law that runs and the copy people read then
+silently disagree. This happened: a reviewer cited an encoding bug in the cached
+`review_gate.py` that the source had already fixed.
+
+So: **any change under `hooks/`, `tools/`, `skills/` or `agents/` bumps the version in
+`.claude-plugin/plugin.json`** — that is what makes the cache refresh on reinstall. The
+`cache_parity.py` SessionStart hook is the tripwire for the sessions in between: it compares
+the running plugin root with the cache entry of the same version and names every file that
+disagrees. It warns; it never blocks.
 
 ## Not part of the plugin
 
