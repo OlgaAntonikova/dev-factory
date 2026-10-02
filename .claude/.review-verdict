@@ -1,0 +1,6 @@
+{
+  "verdict": "APPROVE",
+  "diffSha256": "f74b262ce935fd1d41ce33959e5948e19e16bca97487ecbda2e2cddfea7a83ce",
+  "reviewer": "dev-factory-reviewer",
+  "findings": ""
+}

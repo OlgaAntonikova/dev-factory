@@ -25,6 +25,7 @@ The unit of work is a **phase** (from the spec). The unit of iteration is a **ta
 ### 2. Green — implement the minimum that passes
 
 - Respect the spec's architectural bans (no forbidden packages — including transitively; no banned patterns). If tempted to add a dependency, re-read the contract first.
+- **Log as you write, not afterwards** (`RULE-LOGGING`). Every new failure path logs where it is caught, at `ERROR`, with the operation and its context; a catch that neither logs nor re-raises is never written. Every external call (database, HTTP, bot API, file) logs its failure with enough context to reproduce it, and never its credentials. The logger and its redaction exist from Phase 0 - a feature is never built on an application that cannot yet report its own failures.
 - Any decision the spec does not cover: make it, record it in `DECISIONS.md`, move on. Any *domain fact* the spec does not state: do not invent it — mark `TODO(expert)` and add to `NEEDS_REVIEW.md`.
 
 ### 3. Verify — the test taxonomy
@@ -39,6 +40,12 @@ Choose by layer; a class typically needs one or two of these, not all:
 | Persistence / external systems | Integration on the **real** system (Testcontainers or equivalent), migrations applied, fixture seeded | **No mocks of the real system anywhere** |
 | UI components (only if the spec includes UI in the automated-test boundary) | Component tests (bUnit, Avalonia.Headless, or equivalent) for the 1–2 interaction-critical components | Re-render correctness, not pixel perfection |
 | Performance-critical paths | Benchmarks **as gates** | Explicit numbers from the spec: "zero allocations on the happy path", "< 1 µs" |
+
+**Logging has tests of its own, whatever the stack** (`RULE-LOGGING`):
+
+- **Redaction** — feed the logger a record carrying each secret on the spec's redaction list, and assert none of them comes out. This is a negative test in the `RULE-NEGATIVE-TEST` sense, and it is mutation-proven like any guard: disable the filter and watch the test fail.
+- **Failure paths** — for each kind of handled failure (invalid input, external call down, unhandled exception reaching the top-level handler), one test triggers it and asserts an `ERROR` record with the operation name and the stack trace. A failure path whose log line nobody has seen is not known to log.
+- **Startup** — one test asserts the startup record carries the version and the effective configuration, and contains no secret.
 
 **The spec's testing boundary overrides this table.** If the spec excludes a layer from automated testing ("UI is not auto-tested"), do not invent tests for it, and skip rows whose subject does not exist in the project (no database → no persistence row). Concentrate effort where the spec names the hard classes.
 
@@ -64,4 +71,6 @@ Determinism rule for any tooling you build along the way: pinned model/tool vers
 - A validator with no failing-input test.
 - An integration test mocking the database.
 - A benchmark that prints numbers but gates nothing.
+- A `catch`/`except` that neither logs nor re-raises, or a failure that is only visible to the user.
+- A `print` or `console.log` where the logger belongs.
 - `DECISIONS.md` empty after a phase that involved any ambiguity.

@@ -149,6 +149,17 @@ class MissingPieces(unittest.TestCase):
         self.assertIn("PHASE", output)
 
 
+class Logging(unittest.TestCase):
+    def test_a_missing_logging_rule_is_named(self):
+        without = [r for r in spec_doctor.CORE_RULES if r != "RULE-LOGGING"]
+
+        with Repo(**{"docs/SPEC.md": spec_text(rules=without)}) as root:
+            code, output = doctor(root, "--no-run")
+
+        self.assertEqual(1, code)
+        self.assertIn("RULE-LOGGING", output)
+
+
 class EnglishOnly(unittest.TestCase):
     def test_a_missing_english_only_rule_is_named(self):
         without = [r for r in spec_doctor.CORE_RULES if r != "RULE-ENGLISH-ONLY"]

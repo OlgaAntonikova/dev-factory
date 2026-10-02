@@ -80,6 +80,7 @@ is the project's; the meaning is fixed here. Rules the hooks enforce are marked.
 | `RULE-BUILD-HYGIENE` | Warnings are errors and the formatter is authoritative. Neither is ever weakened to get green; a suppression carries a recorded reason | hook + skill |
 | `RULE-BRIEF` | Reports are the changed files and a short summary, not a wall of text | — |
 | `RULE-ENGLISH-ONLY` | Every repository artifact is written in English: the spec and all docs, code comments and docstrings, commit messages, branch names, configuration comments, decision and review records. The sole exception is user-facing localized content shipped as **data** (l10n resource files, seeded content). Conversation with the owner may be in any language; the repository may not | doctor + skill |
+| `RULE-LOGGING` | Every application logs, from Phase 0, through one configured logger - never bare `print`/`console.log`. Every failure is logged where it is caught, at `ERROR` or above, with the operation, its context and the stack trace; an unhandled error is caught and logged by one top-level handler before the process or request dies. A catch that neither logs nor re-raises is a defect. Startup logs the version and the effective configuration with secrets redacted. **Secrets and personal data never reach a log** - tokens, keys, passwords, signed payloads and payment details are redacted by the logger itself, not by each caller. The spec names where logs go, their format and retention, and how an `ERROR` reaches a human. A library with no process of its own satisfies the rule by never swallowing an error and never logging a secret; the application that uses it owns the rest | skill |
 
 ### Why `RULE-MUTATION-PROOF` is core
 
@@ -102,6 +103,35 @@ documents for non-English text mechanically, and the reviewer blocks a diff that
 anywhere else (comments, commit messages, config). The one thing the rule does **not** cover
 is localized user-facing content shipped as data — a translation file is content, not an
 artifact of the process.
+
+### Why `RULE-LOGGING` is core
+
+When something breaks in production, the log is the only witness. A failure that was caught
+and swallowed leaves no trace at all, and the first person to learn of it is a user - days
+later, with nothing to reproduce from. The owner's requirement is that the log says what broke
+*at the moment it broke*, so logging is not something a project gets round to in its last
+phase: it is set up in Phase 0, alongside the build, and every later phase is reviewed for it.
+
+Four parts are load-bearing:
+
+- **One logger, configured once.** Scattered `print` calls have no level, no timestamp and no
+  destination, and cannot be redacted centrally.
+- **No silent catch.** The swallowed exception is the one failure logging cannot recover after
+  the fact. A handler that catches must log or re-raise; the reviewer blocks one that does
+  neither.
+- **A top-level handler.** Whatever slips past every local handler is still logged once, with
+  its stack, before the request or process ends.
+- **Redaction in the logger, not at the call site.** A rule that relies on every caller
+  remembering to mask a token fails the first time one forgets, and a leaked token in a log
+  file is a leaked token. The logger filters known secret fields and patterns itself, and a
+  test feeds it a secret and proves it does not come out (`RULE-NEGATIVE-TEST`).
+
+How an `ERROR` reaches a human - a chat alert, an e-mail, a dashboard - depends on the project,
+so the contract requires only that the spec **names** the path; the mechanism is the project's.
+
+`spec-doctor` checks that the rule is declared. Whether the code obeys it is the reviewer's and
+the build loop's to establish: deciding mechanically, in an arbitrary language, whether a catch
+block is silent would be guessing.
 
 ### The phase branch
 

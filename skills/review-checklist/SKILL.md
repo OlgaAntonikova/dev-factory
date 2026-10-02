@@ -18,6 +18,7 @@ Applicability rule: skip items whose subject does not exist in the project (no d
 5. **Reserved actions untouched** — if the project protocol reserves actions to the user (installs, git, deploys), the change was produced without the agent performing them; checklists and ready-to-run commands were handed over instead.
 6. **Build hygiene intact** — warnings-as-errors and nullable settings untouched; no suppressions added without an ADR-grade justification in the diff.
 7. **English only (`RULE-ENGLISH-ONLY`)** — no non-English text introduced anywhere in the diff: docs, code comments, docstrings, commit messages, config comments, test names. The sole exception is user-facing localized content shipped as data (l10n resource files, seeded content). `spec-doctor` scans only the required documents, so the reviewer is the enforcement for everything else.
+7a. **Logging (`RULE-LOGGING`)** — `spec-doctor` only checks that the rule is declared; the code is yours to check. BLOCK on any of: a `catch`/`except` that neither logs nor re-raises; a new failure path (handler, external call, background job) with no `ERROR` record carrying the operation, its context and the stack trace; `print`/`console.log` used as logging; a secret, token, key, password, signed payload or personal data passed into a log call or able to reach one (check the redaction list in the spec against what the diff logs); a new secret field added without being added to the redaction list; the top-level handler or the redaction test weakened or removed.
 
 ## Level 2 — Spec conformance
 

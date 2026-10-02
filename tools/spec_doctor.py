@@ -46,6 +46,7 @@ CORE_RULES = [
     "RULE-BUILD-HYGIENE",
     "RULE-BRIEF",
     "RULE-ENGLISH-ONLY",
+    "RULE-LOGGING",
 ]
 
 #: RULE-ENGLISH-ONLY, the mechanical part. The doctor checks the required documents; text in
