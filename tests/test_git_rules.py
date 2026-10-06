@@ -242,6 +242,50 @@ class BypassesFoundInReview(unittest.TestCase):
                                "git push origin feature/1-x:main feature/1-x",
                                "git push origin feature/1-x:refs/heads/main")
 
+    def test_redirections_are_not_refspecs(self):
+        # Found in the first live use: `git push -u origin <work branch> 2>&1` was blocked for
+        # pushing to a branch called "2>". Redirections are dropped wherever they stand - and a
+        # protected destination stays protected however the output is redirected.
+        with Repo("feature/1-x") as root:
+            for command in ("git push -u origin feature/1-x 2>&1",
+                            "git push origin feature/1-x > push.log",
+                            "git push origin feature/1-x &>/dev/null",
+                            "git push origin feature/1-x 2> err.txt | tail -3",
+                            "git push origin feature/1-x >push.log 2>err.txt",
+                            "git push -u origin feature/1-x 2>&1; echo done",
+                            "git push -u origin feature/1-x 2>&1| tail -3"):
+                code, stderr = guard(command, root)
+                self.assertEqual(ALLOW, code, f"{command}: {stderr}")
+
+            self.assertBlocked(root, "git push origin dev 2>&1",
+                               "git push > push.log origin main",
+                               "git push origin main &")
+
+    def test_arguments_after_a_redirection_are_still_read(self):
+        # Review of the first fix: splitting on the `&` of `2>&1` cut the command, and dropping
+        # the leftover `2>` made everything after it invisible.
+        with Repo("feature/1-x") as root:
+            self.assertBlocked(root, "git push origin feature/1-x 2>&1 main",
+                               "git push origin feature/1-x 2>&1 dev",
+                               "git push origin feature/1-x >&2 main",
+                               "git push -u origin 2>&1 feature/1-x:main",
+                               "git push origin 2>&1 --force feature/1-x",
+                               "git push origin feature/1-x &> push.log main")
+
+    def test_a_substitution_inside_a_command_hides_nothing(self):
+        # The words after a substitution belong to the command it interrupted; the guard cannot
+        # see what the substitution yields, so a write is refused.
+        with Repo("feature/1-x") as root:
+            self.assertBlocked(root, "git push origin feature/1-x > $(echo x) main",
+                               "git push origin > `echo x` main",
+                               "git push origin >(cat) main", "git push origin <(cat) main",
+                               "git push origin $(echo x) main")
+
+            for command in ("git log --format=%H $(git merge-base dev HEAD)",
+                            "echo $(git rev-parse HEAD)"):
+                code, stderr = guard(command, root)
+                self.assertEqual(ALLOW, code, f"{command}: {stderr}")
+
     def test_a_deletion_refspec_is_blocked_even_for_a_work_branch(self):
         # `:branch` deletes on the remote, like --delete. Work branches are deleted by
         # `gh pr merge --delete-branch`, after review, not by a bare push.

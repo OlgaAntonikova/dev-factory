@@ -49,6 +49,12 @@ MASK = "_quoted_"
 #: Separators between simple commands. `$(`, `(` and backticks open a command.
 SEPARATOR = re.compile(r"\|\||&&|\$\(|[;|&\n()`]")
 
+#: A redirection written as one word (`2>&1`, `>out.txt`, `&>/dev/null`), and one whose target
+#: is the next word (`>`, `2>`, `&>`). Splitting on `&` leaves `2>&1` as `2>` and `1`; before
+#: these were dropped, a push ending in `2>&1` was read as pushing a branch called "2>".
+REDIRECT_WORD = re.compile(r"^(\d*[<>]{1,2}|&>{1,2})&?\S+$")
+REDIRECT_OPERATOR = re.compile(r"^(\d*[<>]{1,2}|&>{1,2})$")
+
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][\w-]*)\1")
 QUOTED = re.compile(r"\$?'([^']*)'|\"((?:[^\"\\]|\\.)*)\"")
 
@@ -204,13 +210,54 @@ def unquote(command: str, depth: int = 0) -> str:
     return "\n".join([text] + executed)
 
 
+#: Redirections that contain an `&`, which would otherwise be split on as a separator and cut
+#: the command in two: fd duplication (`2>&1`, `>&2`, `<&0`, `>&-`) has no file target and is
+#: dropped; `&>`, `&>>` and `>&` followed by a file redirect both streams to it, which is a `>`.
+FD_DUPLICATION = re.compile(r"\d*[<>]&(\d+|-)(?=[\s;|&)]|$)")
+BOTH_STREAMS = re.compile(r"&>>?|>&")
+
+#: Separators after which the command they interrupt continues past a substitution the guard
+#: cannot see into: `git push origin $(echo x) main` pushes `main`.
+OPENS_SUBSTITUTION = {"$(", "(", "`"}
+
+#: Appended to a command whose arguments run on past a substitution, or redirect into one. It
+#: contains `$`, so every argument-dependent check refuses rather than guesses.
+UNSEEN = "$unseen"
+
+
 def commands(command: str):
     """Each simple command as a token list, with what precedes the real command removed."""
-    for segment in SEPARATOR.split(unquote(strip_heredocs(command))):
-        tokens = strip_wrappers(segment.split())
+    text = unquote(strip_heredocs(command))
+    text = BOTH_STREAMS.sub(" > ", FD_DUPLICATION.sub(" ", text))
+    parts = re.split("(" + SEPARATOR.pattern + ")", text)
+
+    for index in range(0, len(parts), 2):
+        following = parts[index + 1] if index + 1 < len(parts) else ""
+        tokens = without_redirections(strip_wrappers(parts[index].split()))
+
+        if tokens and following in OPENS_SUBSTITUTION:
+            tokens = tokens + [UNSEEN]
 
         if tokens:
             yield tokens
+
+
+def without_redirections(tokens):
+    """Redirections are not arguments, wherever they stand in the command. An operator whose
+    target was cut off by a substitution needs nothing here: the command it belongs to already
+    carries `$unseen` from the split."""
+    kept = []
+    skip = False
+
+    for token in tokens:
+        if skip:
+            skip = False
+        elif REDIRECT_OPERATOR.match(token):
+            skip = True
+        elif not REDIRECT_WORD.match(token):
+            kept.append(token)
+
+    return kept
 
 
 def options(arguments):
@@ -433,7 +480,8 @@ if not integration_valid and any(command_name(t[0]) in {"git", "gh"} for t in pa
 
 GIT_ALLOWED = {
     "status", "diff", "log", "show", "blame", "rev-parse", "ls-files", "shortlog", "describe",
-    "grep", "help", "var", "reflog", "ls-remote",
+    "grep", "help", "var", "reflog", "ls-remote", "merge-base", "rev-list", "cat-file",
+    "ls-tree", "for-each-ref", "show-ref", "name-rev",
     "add", "commit", "restore", "stash", "rm", "mv", "revert", "cherry-pick", "reset",
     "branch", "checkout", "switch", "worktree",
     "clone", "init", "fetch", "pull", "merge", "push",
