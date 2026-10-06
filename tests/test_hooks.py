@@ -23,6 +23,15 @@ BLOCK = 2
 OK_COMMAND = [sys.executable, "-c", "pass"]
 FAILING_COMMAND = [sys.executable, "-c", "import sys; sys.stderr.write('boom'); sys.exit(1)"]
 
+#: Succeeds only when the interpreter that runs it is a virtual environment's.
+INSIDE_A_VENV = ["python", "-c", "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"]
+
+
+def make_venv(root):
+    """A real, pip-less virtual environment at <root>/.venv."""
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", os.path.join(root, ".venv")],
+                   check=True, capture_output=True)
+
 
 def run_hook(name, payload, root):
     proc = subprocess.run(
@@ -460,6 +469,64 @@ class StopGate(unittest.TestCase):
 
         self.assertEqual(ALLOW, code)
 
+    def test_python_runs_inside_the_projects_virtual_environment(self):
+        with TempProject({"version": 1, "build": OK_COMMAND, "test": INSIDE_A_VENV}) as root:
+            make_venv(root)
+            self.arm(root)
+            code, stderr = self.stop(root)
+
+        self.assertEqual(ALLOW, code, stderr)
+
+    def test_a_venv_without_pyvenv_cfg_is_not_used(self):
+        outside = ["python", "-c", "import sys; sys.exit(0 if sys.prefix == sys.base_prefix else 1)"]
+
+        with TempProject({"version": 1, "build": OK_COMMAND, "test": outside}) as root:
+            make_venv(root)
+            os.remove(os.path.join(root, ".venv", "pyvenv.cfg"))
+            self.arm(root)
+            code, stderr = self.stop(root)
+
+        self.assertEqual(ALLOW, code, stderr)  # the system interpreter ran, not the venv's
+
+    def test_a_command_file_planted_in_the_repository_is_never_run(self):
+        command = ["python3", "-c", "import sys; sys.exit(1)"]
+
+        with TempProject({"version": 1, "build": OK_COMMAND, "test": command}) as root:
+            for name in ("python3.cmd", "python3.bat", "python3"):
+                path = os.path.join(root, name)
+                with open(path, "w") as planted:
+                    planted.write("@exit /b 0\n" if name.endswith((".cmd", ".bat")) else
+                                  "#!/bin/sh\nexit 0\n")
+                os.chmod(path, 0o755)
+
+            self.arm(root)
+            code, _ = self.stop(root)
+
+        self.assertEqual(BLOCK, code)
+
+    def test_only_the_python_interpreter_is_redirected_into_the_venv(self):
+        probe = "devfactory-venv-probe"
+
+        with TempProject({"version": 1, "build": OK_COMMAND, "test": [probe]}) as root:
+            make_venv(root)
+            scripts = os.path.join(root, ".venv", "Scripts" if os.name == "nt" else "bin")
+            # A real executable that succeeds: on Windows the venv's own launcher under another
+            # name (it exits 0 on an empty stdin), elsewhere a shell script.
+            if os.name == "nt":
+                import shutil
+
+                shutil.copy(os.path.join(scripts, "python.exe"), os.path.join(scripts, probe + ".exe"))
+            else:
+                path = os.path.join(scripts, probe)
+                with open(path, "w") as script:
+                    script.write("#!/bin/sh\nexit 0\n")
+                os.chmod(path, 0o755)
+
+            self.arm(root)
+            code, stderr = self.stop(root)
+
+        self.assertEqual(BLOCK, code)
+        self.assertIn("could not run", stderr)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

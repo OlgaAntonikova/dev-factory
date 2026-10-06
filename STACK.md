@@ -74,6 +74,26 @@ If a project needs two commands to build, that is a script in the project, named
 The plugin does not get a shell, on purpose: a stop gate that can run arbitrary shell is a stop
 gate that can be talked into running `true`.
 
+## A Python virtual environment is used as if activated
+
+If a command's first word is `python` or `python3`, and the repository root holds `.venv/` or
+`venv/` with a `pyvenv.cfg` and that interpreter in its `Scripts/` (Windows) or `bin/`
+directory, the stop gate and `spec-doctor` run that interpreter and put its directory first on
+`PATH`. So `["python", "-m", "pytest", "-q"]` runs with the project's packages whether or not
+the session was started with the environment activated. Without this, Windows would start the
+interpreter the hook itself runs on: `CreateProcess` searches the parent's own directory before
+`PATH`. Declare Python tools through the interpreter (`python -m pytest`), not by their script
+name; a bare `pytest` is not redirected.
+
+Nothing else changes. No command is searched for - not on `PATH`, not in the current directory,
+not with `PATHEXT` - so a `python.cmd` dropped into a repository is never run. Every other first
+word, and every project without such an environment, runs exactly as declared.
+
+The trade-off, made on purpose: the gate trusts the project's interpreter, and `.venv` is
+normally git-ignored, so a replaced interpreter would not show in a diff. That is the same trust
+the project already places in its environment to run at all; the alternative was a gate that is
+red on every Windows machine for every Python project, which teaches people to ignore it.
+
 ## Missing file: the gate blocks, it does not skip
 
 If source files were edited this session and `.dev-factory.json` is absent or unparseable, the
