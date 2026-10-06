@@ -12,7 +12,7 @@ The unit of work is a **phase** (from the spec). The unit of iteration is a **ta
 1. Read the phase's **Gate** criteria first — the gate defines done; work backwards from it.
 2. Read the referenced spec sections fully. If the spec says "implement §6 verbatim", the spec text is the test oracle.
 3. Post a short plan: files to create/modify, order, open questions. Wait for go-ahead if the protocol requires it.
-4. **Environment gate — before any code.** If the phase introduces tools, SDKs, templates, or packages: the first output is a checklist for the user (program/package + exact version + install command) and a package+version list for approval. Never install anything yourself — the user installs and confirms. Before adding an explicit reference to a package that already arrives transitively, discover the transitive version (`dotnet list package --include-transitive` or the ecosystem's equivalent) and pin exactly that version — never force a newer major over a transitive dependency.
+4. **Environment gate — before any code.** Project dependencies are yours to install (`RULE-INSTALLS`, `RULE-DEPENDENCIES`): into the project's own environment, through its one declared package manager, with the exact version pinned in the declared dependency file in the same change, and listed in the pull request ("package + version + why"). Anything machine-level - a system program, SDK, toolchain, workload, template or global tool - is the owner's: the first output is a checklist (program + exact version + install command), and you wait for confirmation. Before adding an explicit reference to a package that already arrives transitively, discover the transitive version (`dotnet list package --include-transitive` or the ecosystem's equivalent) and pin exactly that version — never force a newer major over a transitive dependency.
 
 ## Per-task cycle
 
@@ -53,10 +53,15 @@ Determinism rule for any tooling you build along the way: pinned model/tool vers
 
 ### 4. Record
 
-- **A phase gets a branch: `phase/<n>`, created before the first commit of the phase.** A
-  readable suffix is allowed - `phase/8-polish` - but the number is not optional. The mainline is never committed to directly; merging is the owner's. The agent may push that branch and nothing else (`RULE-GIT`).
-- One logical change per commit, Conventional Commits. Who executes git is set by the project protocol: if the spec reserves git to the user, prepare the exact commands and the commit message instead of running them.
-- Local CI parity before every commit: build → test → format/lint verify. If CI runs it, you run it locally first.
+**Every task is a work branch and a pull request** (`RULE-GIT`, "The branch model" in `CONTRACT.md`):
+
+1. Start from a fresh `dev`: `git switch dev && git pull`, then `git switch -c feature/<n>-<slug>` (or `fix/`, `chore/`, `docs/`, `refactor/`, `test/`, `ci/`). One task per branch; a phase is several of them.
+2. One logical change per commit, Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `test:`, `refactor:`, `ci:`). Every commit is preceded by the clean-context review and its `review_gate` stamp (`RULE-REVIEW`).
+3. Local CI parity before every push: build → test → format/lint verify. If CI runs it, you run it locally first.
+4. `git push -u origin <branch>`, then `gh pr create --base dev` with a body that states what changed, how it was verified (commands and their results), the `INV-n` / `PHASE-n` it serves, any dependency added ("package + version + why"), and the reviewer's verdict.
+5. `gh pr checks --watch`. Red: read the failing run (`gh run view --log-failed`), fix on the same branch, push again. Never merge around a red check.
+6. Green and `APPROVE`: `gh pr merge --squash --delete-branch`, then switch back to `dev` and pull. The guard refuses a merge into anything but `dev`, or with any check red, pending or missing.
+7. `main`/`master` is never touched. The release pull request from `dev` is the owner's.
 
 ## Phase closing (gate protocol)
 

@@ -90,13 +90,23 @@ class GuardStackIndependence(unittest.TestCase):
         self.assertEqual(ALLOW, self.guard("dotnet restore", DOTNET))
         self.assertEqual(ALLOW, self.guard("pip install -r requirements.txt", PYTHON))
 
-    def test_adding_a_dependency_is_blocked(self):
-        self.assertEqual(BLOCK, self.guard("npm install left-pad", NODE))
+    def test_adding_a_dependency_to_the_project_is_allowed(self):
+        # RULE-DEPENDENCIES, owner's decision of 2026-10-06: the agent adds dependencies itself
+        # and pins the exact version in the declared file in the same change.
+        self.assertEqual(ALLOW, self.guard("npm install left-pad@1.3.0", NODE))
+        self.assertEqual(ALLOW, self.guard("cargo add serde", RUST))
+        self.assertEqual(ALLOW, self.guard("pip install requests==2.32.3", PYTHON))
+        self.assertEqual(ALLOW, self.guard("python -m pip install requests==2.32.3", PYTHON))
+        self.assertEqual(ALLOW, self.guard("dotnet add package Newtonsoft.Json", DOTNET))
+
+    def test_installing_for_the_whole_machine_is_blocked(self):
         self.assertEqual(BLOCK, self.guard("npm i -g typescript", NODE))
-        self.assertEqual(BLOCK, self.guard("cargo add serde", RUST))
+        self.assertEqual(BLOCK, self.guard("npm install --global typescript", NODE))
         self.assertEqual(BLOCK, self.guard("cargo install ripgrep", RUST))
-        self.assertEqual(BLOCK, self.guard("pip install requests", PYTHON))
-        self.assertEqual(BLOCK, self.guard("dotnet add package Newtonsoft.Json", DOTNET))
+        self.assertEqual(BLOCK, self.guard("pip install --user requests", PYTHON))
+        self.assertEqual(BLOCK, self.guard("python -m pip install --user requests", PYTHON))
+        self.assertEqual(BLOCK, self.guard("dotnet tool install -g dotnet-ef", DOTNET))
+        self.assertEqual(BLOCK, self.guard("dotnet workload install maui", DOTNET))
 
     def test_a_foreign_package_manager_is_blocked_outright(self):
         self.assertEqual(BLOCK, self.guard("pip install requests", NODE))
@@ -108,7 +118,7 @@ class GuardStackIndependence(unittest.TestCase):
     def test_the_reason_names_the_rule(self):
         # The agent reads this message and has to know which rule it met.
         with TempProject(NODE) as root:
-            _, stderr = run_hook("guard_bash.py", bash("npm install left-pad"), root)
+            _, stderr = run_hook("guard_bash.py", bash("pip install requests"), root)
 
         self.assertIn("RULE-DEPENDENCIES", stderr)
 
@@ -131,13 +141,11 @@ class GuardTheLawThatNeverDependsOnTheStack(unittest.TestCase):
         self.assertEqual(ALLOW, self.guard('git commit -m "x"'))
         self.assertEqual(ALLOW, self.guard("git diff --stat"))
 
-    def test_the_agent_may_not_publish_or_rewrite(self):
-        # `git push` is deliberately absent here. Under RULE-GIT variant B it is conditional -
-        # allowed onto a phase branch, blocked everywhere else - so asserting it in this list
-        # would pass for the wrong reason: these temp directories are not git repositories, so
-        # the guard blocks the push for having an undeterminable destination rather than for
-        # the reason this test is named after. tests/test_git_rules.py covers push properly,
-        # against a real repository on a known branch.
+    def test_the_agent_may_not_rewrite_or_target_the_mainline(self):
+        # `git push` is deliberately absent here: it is conditional on the branch, and these
+        # temp directories are not git repositories, so it would be blocked for having an
+        # undeterminable destination rather than for the reason this test is named after.
+        # tests/test_git_rules.py covers push against a real repository on a known branch.
         for command in ("git remote add origin x", "git rebase -i HEAD~2",
                         "git commit --amend", "git commit --no-verify -m x", "gh pr create"):
             self.assertEqual(BLOCK, self.guard(command), command)

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Tests for RULE-GIT variant B: the phase branch is the agent's, the mainline is not.
+"""Tests for RULE-GIT: work branches and pull requests are the agent's, the mainline is not.
 
 A real git repository in each test, because what the guard asks git - "which branch is checked
-out" - cannot be faked without testing the fake.
+out" - cannot be faked without testing the fake. `gh` is replaced by a stand-in script that
+answers `gh pr view` with whatever pull request the test describes.
 """
 import json
 import os
@@ -20,26 +21,45 @@ BLOCK = 2
 
 CONFIG = {"version": 1, "build": ["true"], "test": ["true"]}
 
+FAKE_GH = """\
+import json, os, sys
+state = os.environ.get("FAKE_PR")
+if state is None:
+    sys.exit(1)
+print(state)
+"""
+
 
 def git(root, *args):
     return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
 
 
-def guard(command, root):
+def guard(command, root, pull_request=None):
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": root,
+           "DEV_FACTORY_GH": os.path.join(root, "fake_gh.py")}
+    env.pop("FAKE_PR", None)
+
+    if pull_request is not None:
+        env["FAKE_PR"] = json.dumps(pull_request)
+
     proc = subprocess.run(
         [sys.executable, os.path.join(HOOKS, "guard_bash.py")],
         input=json.dumps({"tool_name": "Bash", "tool_input": {"command": command}}),
-        capture_output=True, text=True, cwd=root,
-        env={**os.environ, "CLAUDE_PROJECT_DIR": root},
+        capture_output=True, text=True, cwd=root, env=env,
     )
 
     return proc.returncode, proc.stderr
 
 
-class Repo:
-    """A repository with one commit, checked out on the branch the test names."""
+def pr(base="dev", checks=(("ci", "SUCCESS"),)):
+    return {"baseRefName": base, "state": "OPEN",
+            "statusCheckRollup": [{"name": n, "conclusion": c} for n, c in checks]}
 
-    def __init__(self, branch="phase/3", init=True):
+
+class Repo:
+    """A repository with one commit on main and a dev branch, checked out on the named branch."""
+
+    def __init__(self, branch="feature/3-orders", init=True):
         self.branch = branch
         self.init = init
 
@@ -48,6 +68,9 @@ class Repo:
 
         with open(os.path.join(self.dir, ".dev-factory.json"), "w", encoding="utf-8") as f:
             json.dump(CONFIG, f)
+
+        with open(os.path.join(self.dir, "fake_gh.py"), "w", encoding="utf-8") as f:
+            f.write(FAKE_GH)
 
         if not self.init:
             return self.dir
@@ -61,9 +84,10 @@ class Repo:
 
         git(self.dir, "add", "a.txt")
         git(self.dir, "commit", "-q", "-m", "first")
+        git(self.dir, "branch", "dev")
 
         if self.branch != "main":
-            git(self.dir, "checkout", "-q", "-b", self.branch)
+            git(self.dir, "checkout", "-q", "-B", self.branch)
 
         return self.dir
 
@@ -72,142 +96,382 @@ class Repo:
 
 
 @unittest.skipIf(shutil.which("git") is None, "git is not available")
-class ThePhaseBranchIsTheAgents(unittest.TestCase):
-    def test_pushing_the_checked_out_phase_branch_is_allowed(self):
-        with Repo("phase/3") as root:
-            self.assertEqual(ALLOW, guard("git push", root)[0])
-            self.assertEqual(ALLOW, guard("git push origin phase/3", root)[0])
-            self.assertEqual(ALLOW, guard("git push -u origin phase/3", root)[0])
+class WorkBranchesAreTheAgents(unittest.TestCase):
+    def test_committing_and_pushing_a_work_branch_is_allowed(self):
+        for branch in ("feature/3-orders", "fix/rate-cache", "chore/ci", "docs/readme",
+                       "refactor/x", "test/y", "ci/z"):
+            with Repo(branch) as root:
+                for command in ('git commit -m "feat: x"', "git push",
+                                f"git push -u origin {branch}", f"git push origin HEAD:{branch}"):
+                    code, stderr = guard(command, root)
+                    self.assertEqual(ALLOW, code, f"{branch}: {command}: {stderr}")
 
-    def test_an_explicit_refspec_onto_the_phase_branch_is_allowed(self):
-        # Found by mutation: dropping the split of "source:destination" failed nothing, because
-        # every refspec test named a destination that was blocked either way. What the split
-        # actually buys is this - reading the destination out of a legitimate push, rather than
-        # rejecting it for containing a colon.
-        with Repo("phase/3") as root:
-            for command in ("git push origin HEAD:phase/3",
-                            "git push origin phase/3:phase/3"):
-                code, stderr = guard(command, root)
-
-                self.assertEqual(ALLOW, code, f"{command}: {stderr}")
-
-    def test_a_readable_suffix_is_allowed_but_the_number_is_not_optional(self):
-        # The number is what ties the branch to a PHASE-n block in the spec. Without it a
-        # branch is just a branch, and the rule stops meaning anything.
-        with Repo("phase/8-polish") as root:
-            self.assertEqual(ALLOW, guard("git push", root)[0])
-            self.assertEqual(ALLOW, guard("git push origin phase/8-polish", root)[0])
-
-        with Repo("phase/finish") as root:
-            code, stderr = guard("git push", root)
-
-        self.assertEqual(BLOCK, code)
-        self.assertIn("not a phase branch", stderr)
-
-    def test_creating_any_branch_is_allowed_on_purpose(self):
-        # Not an oversight. A scratch branch cannot be pushed and a commit on it does not touch
-        # the mainline, so restricting creation would be a rule that prevents nothing.
-        with Repo("phase/3") as root:
-            for command in ("git checkout -b feature/experiment", "git switch -c scratch",
-                            "git branch anything"):
+    def test_creating_branches_and_moving_around_is_allowed(self):
+        with Repo("dev") as root:
+            for command in ("git switch dev", "git pull", "git fetch origin",
+                            "git switch -c feature/4-auth", "git checkout -b fix/x",
+                            "git branch scratch"):
                 self.assertEqual(ALLOW, guard(command, root)[0], command)
 
-    def test_committing_on_a_phase_branch_is_allowed(self):
-        with Repo("phase/12") as root:
-            self.assertEqual(ALLOW, guard('git commit -m "work"', root)[0])
+    def test_bringing_dev_into_a_work_branch_is_allowed(self):
+        with Repo("feature/3-orders") as root:
+            self.assertEqual(ALLOW, guard("git merge origin/dev", root)[0])
 
-    def test_creating_a_phase_branch_is_allowed(self):
-        with Repo("main") as root:
-            for command in ("git checkout -b phase/4", "git switch -c phase/4",
-                            "git branch phase/4", "git switch phase/4"):
+    def test_deleting_an_own_work_branch_is_allowed(self):
+        with Repo("dev") as root:
+            self.assertEqual(ALLOW, guard("git branch -d feature/3-orders", root)[0])
+
+    def test_clone_and_init_are_allowed(self):
+        with Repo("dev") as root:
+            for command in ("git clone https://github.com/o/r.git", "git init"):
                 self.assertEqual(ALLOW, guard(command, root)[0], command)
 
 
 @unittest.skipIf(shutil.which("git") is None, "git is not available")
-class TheMainlineIsNot(unittest.TestCase):
-    def test_committing_on_the_mainline_is_blocked(self):
-        # The one thing worth preventing, and it has exactly one way in. Guarding checkout
-        # instead would be a rule against moving around: easy to trip over and easy to evade.
-        for branch in ("main", "master"):
-            with Repo("main") as root:
-                if branch == "master":
-                    git(root, "branch", "-m", "master")
-
+class ProtectedBranches(unittest.TestCase):
+    def test_committing_on_a_protected_branch_is_blocked(self):
+        for branch in ("main", "master", "dev"):
+            with Repo(branch) as root:
                 code, stderr = guard('git commit -m "x"', root)
 
                 self.assertEqual(BLOCK, code, branch)
                 self.assertIn(branch, stderr)
 
-    def test_pushing_the_mainline_is_blocked_however_it_is_named(self):
-        with Repo("phase/3") as root:
-            for command in ("git push origin main", "git push origin HEAD:main",
-                            "git push origin phase/3:main"):
+    def test_merging_into_a_protected_branch_locally_is_blocked(self):
+        with Repo("dev") as root:
+            code, stderr = guard("git merge feature/3-orders", root)
+
+        self.assertEqual(BLOCK, code)
+        self.assertIn("pull request", stderr)
+
+    def test_pushing_a_protected_branch_is_blocked_however_it_is_named(self):
+        with Repo("feature/3-orders") as root:
+            for command in ("git push origin main", "git push origin master",
+                            "git push origin dev", "git push origin HEAD:dev",
+                            "git push origin feature/3-orders:main"):
                 code, stderr = guard(command, root)
 
                 self.assertEqual(BLOCK, code, command)
-                self.assertIn("not a phase branch", stderr)
+                self.assertIn("not a work branch", stderr)
 
-    def test_pushing_from_the_mainline_is_blocked(self):
-        # No destination named, so the destination is the checked-out branch.
-        with Repo("main") as root:
-            code, stderr = guard("git push", root)
+    def test_pushing_from_a_protected_branch_is_blocked(self):
+        for branch in ("main", "dev"):
+            with Repo(branch) as root:
+                self.assertEqual(BLOCK, guard("git push", root)[0], branch)
 
-        self.assertEqual(BLOCK, code)
-        self.assertIn("not a phase branch", stderr)
+    def test_a_branch_outside_the_naming_scheme_is_not_pushed(self):
+        with Repo("feature/3-orders") as root:
+            for command in ("git push origin experiment", "git push origin phase/3",
+                            "git push origin feature/"):
+                self.assertEqual(BLOCK, guard(command, root)[0], command)
 
-    def test_pushing_some_other_branch_is_blocked(self):
-        with Repo("phase/3") as root:
-            self.assertEqual(BLOCK, guard("git push origin feature/experiment", root)[0])
-            self.assertEqual(BLOCK, guard("git push origin phase3", root)[0])
-            self.assertEqual(BLOCK, guard("git push origin phase/", root)[0])
+    def test_deleting_or_renaming_a_protected_branch_is_blocked(self):
+        with Repo("feature/3-orders") as root:
+            for command in ("git branch -D dev", "git branch -d main", "git branch -m dev x"):
+                self.assertEqual(BLOCK, guard(command, root)[0], command)
+
+    def test_a_quoted_protected_branch_is_still_a_protected_branch(self):
+        # Quoted arguments are masked when they look like data. A plain word is not masked, so
+        # quoting the destination cannot launder a push to the mainline.
+        with Repo("feature/3-orders") as root:
+            self.assertEqual(BLOCK, guard('git push origin "main"', root)[0])
+            self.assertEqual(BLOCK, guard("git push origin 'dev'", root)[0])
+            # ...and the same unquoting is what lets a quoted work branch through. Without this
+            # line the two above pass even when quoted words are masked, for the wrong reason.
+            self.assertEqual(ALLOW, guard('git push origin "feature/3-orders"', root)[0])
 
 
 @unittest.skipIf(shutil.which("git") is None, "git is not available")
 class WhatIsNeverAllowed(unittest.TestCase):
-    def test_force_is_blocked_even_on_a_phase_branch(self):
-        with Repo("phase/3") as root:
-            for command in ("git push --force origin phase/3",
-                            "git push -f origin phase/3",
-                            "git push --force-with-lease origin phase/3",
-                            "git push origin +phase/3"):
-                code, stderr = guard(command, root)
+    def test_force_is_blocked_even_on_a_work_branch(self):
+        with Repo("feature/3-orders") as root:
+            for command in ("git push --force origin feature/3-orders",
+                            "git push -f", "git push --force-with-lease",
+                            "git push origin +feature/3-orders"):
+                self.assertEqual(BLOCK, guard(command, root)[0], command)
 
-                self.assertEqual(BLOCK, code, command)
-
-    def test_force_with_lease_is_blocked_deliberately(self):
-        # It is the safer of the two and it still replaces a commit somebody may have read.
-        with Repo("phase/3") as root:
-            _, stderr = guard("git push --force-with-lease", root)
-
-        self.assertIn("force-with-lease", stderr)
-
-    def test_bulk_publishing_is_blocked(self):
-        with Repo("phase/3") as root:
+    def test_bulk_publishing_and_remote_deletion_are_blocked(self):
+        with Repo("feature/3-orders") as root:
             for command in ("git push --all", "git push --mirror", "git push --tags",
-                            "git push origin --delete phase/2"):
+                            "git push origin --delete feature/2-x"):
                 self.assertEqual(BLOCK, guard(command, root)[0], command)
 
-    def test_deleting_or_renaming_a_branch_is_blocked(self):
-        with Repo("phase/3") as root:
-            for command in ("git branch -D phase/2", "git branch -d phase/2",
-                            "git branch -m phase/2 phase/9"):
+    def test_history_remotes_tags_and_config_are_the_owners(self):
+        with Repo("feature/3-orders") as root:
+            for command in ("git remote add origin x", "git remote set-url origin y",
+                            "git rebase dev", "git reset --hard HEAD~1",
+                            'git commit --amend -m "x"', "git commit --no-verify -m x",
+                            "git tag v1.0.0", "git config user.name x",
+                            "git filter-branch", "git update-ref refs/heads/dev HEAD"):
                 self.assertEqual(BLOCK, guard(command, root)[0], command)
 
-    def test_remotes_and_history_are_still_the_owners(self):
-        with Repo("phase/3") as root:
-            for command in ("git remote add origin x", "git rebase -i HEAD~2",
-                            "git reset --hard HEAD~1", 'git commit --amend -m "x"',
-                            "gh pr create"):
-                self.assertEqual(BLOCK, guard(command, root)[0], command)
+    def test_reading_remotes_tags_and_config_is_allowed(self):
+        with Repo("feature/3-orders") as root:
+            for command in ("git remote -v", "git remote get-url origin", "git tag",
+                            "git tag -l", "git config --get user.name"):
+                self.assertEqual(ALLOW, guard(command, root)[0], command)
 
     def test_a_push_whose_destination_cannot_be_determined_is_blocked(self):
-        # Not a git repository, so git cannot say what is checked out. An unknown destination
-        # is not one the agent may push to - the safe answer is no, not "probably fine".
         with Repo(init=False) as root:
             code, stderr = guard("git push", root)
 
         self.assertEqual(BLOCK, code)
         self.assertIn("cannot tell which branch", stderr)
+
+    def test_a_command_hidden_in_a_shell_string_is_still_read(self):
+        with Repo("feature/3-orders") as root:
+            self.assertEqual(BLOCK, guard('bash -c "git push origin main"', root)[0])
+            self.assertEqual(BLOCK, guard("cd x && git push origin dev", root)[0])
+            self.assertEqual(BLOCK, guard("bash <<'EOF'\ngit push origin main\nEOF", root)[0])
+
+
+@unittest.skipIf(shutil.which("git") is None, "git is not available")
+class BypassesFoundInReview(unittest.TestCase):
+    """Every command here got exit 0 from the first version of the new guard. Each is a review
+    finding of 2026-10-06; none may come back."""
+
+    def assertBlocked(self, root, *command_list, pull_request=None):
+        for command in command_list:
+            code, stderr = guard(command, root, pull_request)
+            self.assertEqual(BLOCK, code, f"{command}: {stderr}")
+
+    def test_every_refspec_of_a_push_is_judged(self):
+        with Repo("feature/1-x") as root:
+            self.assertBlocked(root, "git push origin dev feature/1-x",
+                               "git push origin :dev feature/1-x",
+                               "git push origin feature/1-x:main feature/1-x",
+                               "git push origin feature/1-x:refs/heads/main")
+
+    def test_a_deletion_refspec_is_blocked_even_for_a_work_branch(self):
+        # `:branch` deletes on the remote, like --delete. Work branches are deleted by
+        # `gh pr merge --delete-branch`, after review, not by a bare push.
+        with Repo("feature/1-x") as root:
+            self.assertBlocked(root, "git push origin :feature/2-old")
+
+    def test_a_fully_qualified_work_branch_is_still_a_work_branch(self):
+        with Repo("feature/1-x") as root:
+            code, stderr = guard("git push origin HEAD:refs/heads/feature/1-x", root)
+
+        self.assertEqual(ALLOW, code, stderr)
+
+    def test_a_variable_in_git_arguments_is_refused(self):
+        # $FLAGS could hold -n (skip hooks); the guard cannot see it, so it refuses.
+        with Repo("feature/1-x") as root:
+            self.assertBlocked(root, "git commit $FLAGS -m x")
+            # An ANSI-C quoted flag is unquoted to the flag itself; were it not, the `$` left
+            # behind would still trip the variable check. Two guards, proven as a pair.
+            self.assertBlocked(root, "git commit $'-n' -m x")
+
+    def test_flag_spellings_do_not_launder_force_or_hook_bypass(self):
+        with Repo("feature/1-x") as root:
+            self.assertBlocked(root, "git push --force-with-lease=feature/1-x",
+                               "git push -uf origin feature/1-x",
+                               "git push --forc origin feature/1-x",
+                               "git push $'-f' origin feature/1-x",
+                               "F=-f; git push $F origin feature/1-x",
+                               "git commit -nm x", "git commit --no-verif -m x",
+                               "git commit --amen -m x",
+                               "git -c core.hooksPath=/dev/null commit -m x",
+                               "git pull --rebase", "git pull -r")
+
+    def test_a_branch_switch_earlier_on_the_line_counts(self):
+        with Repo("feature/1-x") as root:
+            self.assertBlocked(root, "git switch dev && git merge feature/1-x && git push origin",
+                               "git checkout dev; git commit --allow-empty -m x",
+                               "git switch main && git push")
+
+    def test_a_cd_earlier_on_the_line_counts(self):
+        with Repo("feature/1-x") as root:
+            other = tempfile.mkdtemp(prefix="gitrules-other-")
+            try:
+                git(other, "init", "-q", "-b", "dev")
+                git(other, "config", "user.email", "t@example.com")
+                git(other, "config", "user.name", "t")
+                git(other, "commit", "-q", "--allow-empty", "-m", "first")
+                self.assertBlocked(root, f"cd {other} && git push",
+                                   f"cd {other}; git commit --allow-empty -m x",
+                                   'cd "a path with spaces" && git commit -m x')
+            finally:
+                shutil.rmtree(other, ignore_errors=True)
+
+    def test_wrappers_and_shell_syntax_are_looked_through(self):
+        with Repo("feature/1-x") as root:
+            self.assertBlocked(root, "env git push -f origin dev", "eval git push -f origin dev",
+                               "timeout 60 git push -f origin dev",
+                               "echo dev | xargs git push origin",
+                               "{ git push -f origin dev; }",
+                               "if true; then git push -f origin dev; fi",
+                               "for x in a; do git push -f origin dev; done",
+                               "! git push -f origin dev", ">/dev/null git push -f origin dev",
+                               "echo `git push -f origin dev`",
+                               'echo "$(git push -f origin dev)"',
+                               "gi\\t push -f origin dev",
+                               "cat <<EOF | bash\ngit push -f origin dev\nEOF",
+                               "env gh pr merge 5 --admin")
+
+    def test_gh_option_spellings_do_not_reach_writes_or_the_mainline(self):
+        with Repo("feature/1-x") as root:
+            self.assertBlocked(root, "gh api -XPOST repos/o/r/pulls/5/merge",
+                               "gh api graphql --raw-field=query=mutation{x}",
+                               "gh api repos/o/r --field=private=false",
+                               "gh api repos/o/r -fname=x", "gh api repos/o/r --input=body.json",
+                               "gh pr create --base dev --base main",
+                               "gh pr create -B dev -Bmain", "gh pr edit 5 -Bmain")
+
+    def test_an_unexpected_pull_request_answer_fails_closed(self):
+        with Repo("feature/1-x") as root:
+            self.assertBlocked(root, "gh pr merge 5", pull_request=[1, 2])
+            self.assertBlocked(root, "gh pr merge 5",
+                               pull_request={"baseRefName": "dev", "statusCheckRollup": ["x"]})
+
+    def test_a_pull_request_body_from_a_heredoc_keeps_its_base(self):
+        # The way a long body is usually written. The command substitution inside the quotes is
+        # read as a command of its own, without cutting --base off the gh command around it.
+        command = ('gh pr create --title "feat: x" --body "$(cat <<\'EOF\'\n'
+                   "Mentions git push origin main.\nEOF\n)\" --base dev")
+
+        with Repo("feature/1-x") as root:
+            code, stderr = guard(command, root)
+
+        self.assertEqual(ALLOW, code, stderr)
+
+    def test_head_names_the_checked_out_branch(self):
+        with Repo("dev") as root:
+            self.assertBlocked(root, "git push origin HEAD")
+
+        with Repo("feature/1-x") as root:
+            self.assertEqual(ALLOW, guard("git push origin HEAD", root)[0])
+
+    def test_environment_assignments_do_not_hide_the_command(self):
+        with Repo("feature/1-x") as root:
+            self.assertBlocked(root, "GIT_TRACE=1 git push origin main")
+
+    def test_eval_with_a_quoted_string_is_read(self):
+        with Repo("feature/1-x") as root:
+            self.assertBlocked(root, "eval 'git push origin main'")
+
+    def test_reading_config_and_push_options_are_not_mistaken_for_writes(self):
+        with Repo("feature/1-x") as root:
+            for command in ("git config user.name", "git push origin feature/1-x -o ci.skip",
+                            "gh api repos/o/r --include", "git pull --no-rebase"):
+                code, stderr = guard(command, root)
+                self.assertEqual(ALLOW, code, f"{command}: {stderr}")
+
+
+@unittest.skipIf(shutil.which("git") is None, "git is not available")
+class TheIntegrationBranchSetting(unittest.TestCase):
+    def write_config(self, root, value):
+        with open(os.path.join(root, ".dev-factory.json"), "w", encoding="utf-8") as f:
+            json.dump(dict(CONFIG, integrationBranch=value), f)
+
+    def test_a_custom_integration_branch_is_honoured(self):
+        with Repo("develop") as root:
+            self.write_config(root, "develop")
+            self.assertEqual(BLOCK, guard('git commit -m "x"', root)[0])
+            self.assertEqual(ALLOW, guard("gh pr create --base develop --fill", root)[0])
+            self.assertEqual(BLOCK, guard("gh pr create --base dev --fill", root)[0])
+
+    def test_the_mainline_or_a_malformed_value_is_refused(self):
+        for value in ("main", "master", ["dev"], "feature/1-x"):
+            with Repo("feature/1-x") as root:
+                self.write_config(root, value)
+                code, stderr = guard("gh pr create --base main --fill", root)
+
+                self.assertEqual(BLOCK, code, value)
+                self.assertIn("integrationBranch", stderr)
+
+
+@unittest.skipIf(shutil.which("git") is None, "git is not available")
+class TextIsNotACommand(unittest.TestCase):
+    """Each of these was blocked by the first guard, which matched words anywhere."""
+
+    def test_a_note_written_through_a_heredoc_may_mention_anything(self):
+        with Repo("feature/3-orders") as root:
+            command = "cat > notes.md <<'EOF'\ngit clone x\ngh repo delete y\nEOF"
+            self.assertEqual(ALLOW, guard(command, root)[0])
+
+    def test_a_search_pattern_may_mention_anything(self):
+        with Repo("feature/3-orders") as root:
+            # Unmasked, the alternation splits into `gh secret set` and `git push origin main`.
+            command = "grep -nE 'gh\\b|gh secret set|git push origin main' hooks/x.py"
+            self.assertEqual(ALLOW, guard(command, root)[0])
+
+    def test_a_path_or_argument_named_git_is_not_git(self):
+        # Only the first word of a command is the command.
+        with Repo("feature/3-orders") as root:
+            command = "find . -path ./.git -prune -o -name git -print"
+            self.assertEqual(ALLOW, guard(command, root)[0])
+
+    def test_a_commit_message_may_mention_anything(self):
+        with Repo("feature/3-orders") as root:
+            command = 'git commit -m "docs: explain why git push origin main is blocked"'
+            self.assertEqual(ALLOW, guard(command, root)[0])
+
+
+@unittest.skipIf(shutil.which("git") is None, "git is not available")
+class TheGitHubCli(unittest.TestCase):
+    def test_pull_requests_into_dev_issues_and_runs_are_allowed(self):
+        with Repo("feature/3-orders") as root:
+            for command in ('gh pr create --base dev --title "feat: x" --body y',
+                            "gh pr create -B dev --fill", "gh pr view 3", "gh pr checks 3",
+                            "gh pr list", "gh issue create --title x --body y",
+                            "gh run view 1 --log-failed", "gh auth status",
+                            "gh repo create o/r --private", "gh api repos/o/r/pulls"):
+                code, stderr = guard(command, root)
+                self.assertEqual(ALLOW, code, f"{command}: {stderr}")
+
+    def test_a_pull_request_must_name_dev_as_its_base(self):
+        # Without --base, GitHub targets the default branch - the mainline.
+        with Repo("feature/3-orders") as root:
+            for command in ("gh pr create --fill", "gh pr create --base main --fill",
+                            "gh pr create --base master --fill", "gh pr edit 3 --base main"):
+                code, stderr = guard(command, root)
+                self.assertEqual(BLOCK, code, command)
+
+    def test_settings_secrets_releases_and_credentials_are_the_owners(self):
+        with Repo("feature/3-orders") as root:
+            for command in ("gh repo delete o/r --yes", "gh repo edit --visibility public",
+                            "gh secret set X", "gh release create v1", "gh auth token",
+                            "gh auth logout", "gh ruleset list", "gh repo create o/r --public",
+                            "gh repo create o/r", "gh api -X PUT repos/o/r/branches/dev/protection",
+                            "gh api repos/o/r/labels -f name=x"):
+                self.assertEqual(BLOCK, guard(command, root)[0], command)
+
+    def test_merging_into_dev_with_green_checks_is_allowed(self):
+        with Repo("feature/3-orders") as root:
+            code, stderr = guard("gh pr merge 3 --squash --delete-branch", root, pr())
+
+        self.assertEqual(ALLOW, code, stderr)
+
+    def test_merging_into_the_mainline_is_blocked(self):
+        with Repo("feature/3-orders") as root:
+            code, stderr = guard("gh pr merge 3 --squash", root, pr(base="main"))
+
+        self.assertEqual(BLOCK, code)
+        self.assertIn("main", stderr)
+
+    def test_merging_with_red_or_missing_checks_is_blocked(self):
+        with Repo("feature/3-orders") as root:
+            red = guard("gh pr merge 3", root, pr(checks=(("ci", "SUCCESS"), ("lint", "FAILURE"))))
+            pending = guard("gh pr merge 3", root, pr(checks=(("ci", None),)))
+            none = guard("gh pr merge 3", root, pr(checks=()))
+
+        self.assertEqual(BLOCK, red[0])
+        self.assertIn("lint", red[1])
+        self.assertEqual(BLOCK, pending[0])
+        self.assertEqual(BLOCK, none[0])
+        self.assertIn("no checks", none[1])
+
+    def test_a_merge_whose_pull_request_cannot_be_read_is_blocked(self):
+        with Repo("feature/3-orders") as root:
+            code, stderr = guard("gh pr merge 3", root, None)
+
+        self.assertEqual(BLOCK, code)
+        self.assertIn("could not read", stderr)
+
+    def test_admin_merge_is_blocked(self):
+        with Repo("feature/3-orders") as root:
+            self.assertEqual(BLOCK, guard("gh pr merge 3 --admin", root, pr())[0])
 
 
 if __name__ == "__main__":

@@ -32,9 +32,10 @@ Node service without knowing what either is.
 | `test` | yes | `stop_gate`, gates | Argv array. Exit 0 means the suite is green |
 | `fastTest` | no | `stop_gate` | Argv array for the end-of-session check when the full suite is slow. Falls back to `test` |
 | `packageManager` | no | `guard_bash` | The one package manager this project is allowed to invoke |
-| `dependencyFiles` | no | `review-checklist` | Files whose change means a dependency changed, and therefore needs the owner's approval |
+| `dependencyFiles` | no | `review-checklist` | Files whose change means a dependency changed, and therefore must be named in the pull request |
 | `sourceExtensions` | no | `mark_dirty` | What counts as source. Editing one of these arms the stop gate |
 | `blockedCommands` | no | `guard_bash` | Extra project-specific bans. `pattern` is a Python regex, `reason` is shown to the agent |
+| `integrationBranch` | no | `guard_bash` | The branch pull requests target and the agent merges into. Default `dev`. It may not be `main`/`master` or a work-branch name; an invalid value blocks every git and gh command until the owner fixes it |
 | `notes` | no | nobody | Free text, ignored by every hook. See below |
 
 **Argv arrays, not strings.** A command string has to be parsed by a shell, and the shell is
@@ -85,16 +86,16 @@ the file is missing. The agent proposes, the owner confirms, the file is written
 
 ## `packageManager` and what the guard actually blocks
 
-The rule being enforced is `RULE-DEPENDENCIES`: dependency versions live in one declared file
-and change only with the owner's approval. It is not "package managers are scary".
-
-So the guard distinguishes three things:
+The rules being enforced are `RULE-DEPENDENCIES` - one package manager, versions pinned in one
+declared file - and `RULE-INSTALLS` - the project is the agent's, the machine is the owner's.
+Neither is "package managers are scary".
 
 | | Example | Verdict |
 |---|---|---|
 | Running the project's own tooling | `npm test`, `npm run build`, `dotnet build` | **allowed** |
-| Restoring already-declared dependencies | `npm ci`, `dotnet restore`, `cargo fetch` | **allowed** |
-| Adding, removing or upgrading a dependency | `npm install left-pad`, `dotnet add package X`, `pip install requests` | **blocked** |
+| Restoring already-declared dependencies | `npm ci`, `dotnet restore`, `pip install -r requirements.txt` | **allowed** |
+| Adding, removing or upgrading a dependency of the project | `npm install left-pad@1.3.0`, `dotnet add package X`, `pip install requests==2.32.3` | **allowed** - the exact version goes into the declared file in the same change |
+| Installing for the whole machine | `npm i -g`, `pip install --user`, `cargo install`, `go install`, `pipx install`, `dotnet tool install -g`, `dotnet workload install` | **blocked** - the owner's checklist |
 
 Any package manager that is **not** the declared `packageManager` is blocked outright. A .NET
 project has no business running `pip`, and a Node project has none running `cargo`; if it turns

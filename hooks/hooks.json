@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard_bash.py\"",
-            "timeout": 10
+            "timeout": 30
           },
           {
             "type": "command",
