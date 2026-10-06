@@ -12,7 +12,7 @@ A new application is then: a new repository, this plugin installed, and a spec.
 
 ## Status
 
-**0.2.2 — under construction.** Extracted from a first project that ran nine phases under this
+**0.2.3 — under construction.** Extracted from a first project that ran nine phases under this
 process. What exists so far:
 
 | Piece | State |

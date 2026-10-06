@@ -21,6 +21,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks"))
 
+import factory_config  # noqa: E402
 import repo_scan  # noqa: E402
 
 REQUIRED_FILES = [
@@ -133,7 +134,8 @@ def check_stack(root, report, run_commands):
         try:
             # UTF-8 with replacement, not text=True - a non-ASCII byte in tool output must
             # not crash the check (cp1252 default on Windows; same lesson as review_gate).
-            proc = subprocess.run(argv, cwd=root, capture_output=True,
+            resolved, env = factory_config.project_command(root, argv)
+            proc = subprocess.run(resolved, cwd=root, env=env, capture_output=True,
                                   encoding="utf-8", errors="replace")
         except (OSError, ValueError) as error:
             report.fail(f"{field} command", f'`{" ".join(argv)}` could not start: {error}')

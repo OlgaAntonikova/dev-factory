@@ -106,6 +106,17 @@ class AConformingRepository(unittest.TestCase):
         self.assertIn("build command", output)
         self.assertIn("test command", output)
 
+    def test_python_commands_run_inside_the_projects_virtual_environment(self):
+        inside = ["python", "-c", "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"]
+        config = json.dumps({"version": 1, "build": OK_COMMAND, "test": inside})
+
+        with Repo(**{".dev-factory.json": config}) as root:
+            subprocess.run([sys.executable, "-m", "venv", "--without-pip",
+                            os.path.join(root, ".venv")], check=True, capture_output=True)
+            code, output = doctor(root)
+
+        self.assertEqual(0, code, output)
+
 
 class MissingPieces(unittest.TestCase):
     def test_each_required_file_is_named_when_absent(self):
