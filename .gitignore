@@ -361,3 +361,5 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# Per-session review stamp written by hooks/review_gate.py - runtime state, not source
+.claude/.review-verdict
