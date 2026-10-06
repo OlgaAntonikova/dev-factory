@@ -164,6 +164,72 @@ class GuardTheLawThatNeverDependsOnTheStack(unittest.TestCase):
             self.assertEqual(ALLOW, self.guard(command), command)
 
 
+class GuardReadsTheRepositoryTheCommandRunsIn(unittest.TestCase):
+    """Found on the first multi-repository session: the guard read the session anchor's
+    .dev-factory.json, so a command run in another repository met the wrong project's rules."""
+
+    def guard(self, command, anchor, cwd):
+        return run_hook("guard_bash.py", dict(bash(command), cwd=cwd), anchor)[0]
+
+    def test_the_shell_directory_decides_not_the_session_anchor(self):
+        with TempProject(None) as anchor, TempProject(PYTHON) as project:
+            self.assertEqual(ALLOW, self.guard("pip install pytest==8.3.3", anchor, project))
+            self.assertEqual(BLOCK, self.guard("pip install pytest==8.3.3", anchor, anchor))
+
+    def test_a_leading_cd_decides(self):
+        with TempProject(None) as anchor, TempProject(PYTHON) as project:
+            command = f"cd {project} && pip install pytest==8.3.3"
+            self.assertEqual(ALLOW, self.guard(command, anchor, anchor))
+
+    def test_the_other_project_is_held_to_its_own_rules(self):
+        # The anchor allows pip; the repository the command runs in is a Node project.
+        with TempProject(PYTHON) as anchor, TempProject(NODE) as project:
+            self.assertEqual(BLOCK, self.guard("pip install requests==2.32.3", anchor, project))
+
+    def test_stepping_through_a_laxer_directory_does_not_lax_the_repository(self):
+        # Review of the first fix: the config was taken from the first `cd`, so a detour
+        # through a directory with a permissive config changed which rules applied.
+        with TempProject(None) as anchor, TempProject(PYTHON) as project, \
+                TempProject(NODE) as lax:
+            for command in (f"cd {lax} && cd {project} && npm install left-pad@1.3.0",
+                            f"cd {lax} && npm install --prefix {project} left-pad@1.3.0"):
+                self.assertEqual(BLOCK, self.guard(command, anchor, anchor), command)
+
+    def test_a_cd_into_another_project_brings_its_rules(self):
+        # The shell sits in a pip project; the command moves into a Node project first.
+        with TempProject(None) as anchor, TempProject(PYTHON) as here, \
+                TempProject(NODE) as there:
+            command = f"cd {there} && pip install requests==2.32.3"
+            self.assertEqual(BLOCK, self.guard(command, anchor, here))
+
+    def test_a_declared_ban_survives_a_detour(self):
+        banned = dict(PYTHON, blockedCommands=[{"pattern": r"rm\s+-rf\s+build",
+                                                "reason": "the build dir is shared"}])
+
+        with TempProject(None) as anchor, TempProject(banned) as project, \
+                TempProject(None) as empty:
+            command = f"cd {empty} && cd {project} && rm -rf build"
+            self.assertEqual(BLOCK, self.guard(command, anchor, anchor))
+
+    def test_a_nested_config_adds_rules_and_never_replaces_them(self):
+        # A subdirectory's own .dev-factory.json (a monorepo package, a fixture) is governed
+        # by the repository's config as well; a package manager must be allowed by both.
+        with TempProject(None) as anchor, TempProject(PYTHON) as project:
+            sub = os.path.join(project, "packages", "web")
+            os.makedirs(sub)
+
+            with open(os.path.join(sub, ".dev-factory.json"), "w", encoding="utf-8") as f:
+                json.dump(NODE, f)
+
+            self.assertEqual(BLOCK, self.guard("npm install left-pad@1.3.0", anchor, sub))
+
+    def test_a_subdirectory_belongs_to_its_repository(self):
+        with TempProject(None) as anchor, TempProject(PYTHON) as project:
+            sub = os.path.join(project, "app", "deep")
+            os.makedirs(sub)
+            self.assertEqual(ALLOW, self.guard("pip install pytest==8.3.3", anchor, sub))
+
+
 class GuardProjectDeclaredBans(unittest.TestCase):
     def test_a_declared_pattern_blocks_and_gives_its_reason(self):
         config = dict(NODE, blockedCommands=[

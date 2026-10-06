@@ -23,6 +23,23 @@ Node service without knowing what either is.
 }
 ```
 
+## Which file applies
+
+The Bash guard reads the file of the repository a command **acts in** - the shell's directory,
+followed through every `cd` and `git -C` on the line - not the session's anchor. A
+subdirectory's own `.dev-factory.json` (a monorepo package, a fixture) adds to the repository's
+file, never replaces it. When a line touches several directories, the rules combine toward the
+strictest: protected branches and `blockedCommands` are united across all of them and the
+anchor, and a package manager must be permitted by every file governing the directory it runs
+in. Stepping through a directory with a laxer file, or with none, can only add restrictions.
+
+What this cannot see: a package manager aimed at another project by a path argument rather
+than by the directory it runs in (`dotnet add <other>/App.csproj package X`, `mvn -f`,
+`gradle -p`, `composer -d`, `uv pip --python <other venv>`), or pip installing into whichever
+environment happens to be active. The common pointing options (`--prefix`, `--cwd`, `--dir`,
+`--target`, `--project`, ...) are refused; the rest is the reviewer's to catch - the guard is a
+guardrail, not a sandbox (CONTRACT.md, "What the guard is, and is not").
+
 ## Fields
 
 | Field | Required | Used by | Meaning |

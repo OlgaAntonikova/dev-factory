@@ -1,6 +1,6 @@
 {
   "name": "dev-factory",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "A development process as an installable plugin: knowledge in skills, law in hooks, roles in agents. Stack-independent; each repository declares its own build and test commands in .dev-factory.json.",
   "author": {
     "name": "Lyoli"
