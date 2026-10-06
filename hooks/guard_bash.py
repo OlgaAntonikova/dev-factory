@@ -341,11 +341,106 @@ def fail_closed(kind, value, traceback):
 
 sys.excepthook = fail_closed
 
-root = cfg.project_root(data)
-shell_cwd = data.get("cwd") or root
-config, _ = cfg.load(root)
+anchor = cfg.project_root(data)
+shell_cwd = data.get("cwd") or anchor
 masked = unquote(strip_heredocs(cmd))
 parsed = list(commands(cmd))
+
+
+#: Options of `git` itself that take a value, so the value is not read as the subcommand.
+GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
+                     "--config-env"}
+
+def git_invocation(tokens, where):
+    """(subcommand, arguments, working directory, git-level -c values) for git, or None."""
+    if command_name(tokens[0]) != "git":
+        return None
+
+    overrides = []
+    index = 1
+
+    while index < len(tokens) and tokens[index].startswith("-"):
+        option = tokens[index]
+        name = option.split("=", 1)[0]
+        value = option.split("=", 1)[1] if "=" in option else None
+
+        if name in GIT_VALUE_OPTIONS and value is None:
+            value = tokens[index + 1] if index + 1 < len(tokens) else ""
+            index += 1
+
+        if name == "-C" and where is not None:
+            where = os.path.join(where, value)
+        elif name in {"-c", "--config-env"}:
+            overrides.append(value or "")
+
+        index += 1
+
+    if index >= len(tokens):
+        return None
+
+    return tokens[index], tokens[index + 1:], where, overrides
+
+
+def locate(commands_in_order):
+    """Each command with the directory it runs in, following every `cd` on the line. `None`
+    once a `cd` cannot be followed (a variable, `~`, `-`, a quoted path)."""
+    where = shell_cwd
+    located = []
+
+    for tokens in commands_in_order:
+        if command_name(tokens[0]) == "popd":
+            where = None
+            continue
+
+        if command_name(tokens[0]) in {"cd", "pushd"}:
+            target = tokens[1] if len(tokens) > 1 else "~"
+            where = None if re.search(r"[$~`]|^-$", target) or target == MASK or where is None \
+                else os.path.join(where, target)
+            continue
+
+        located.append((tokens, where))
+
+    return located
+
+
+def configs_for(directory):
+    """Every .dev-factory.json that governs a directory: its own and each ancestor's, up to and
+    including the repository root. A nested config (a monorepo package, a fixture) adds rules;
+    it never replaces the repository's. `None` for a directory the guard cannot know. A
+    directory with no config at all is governed by the defaults, `{}`."""
+    if directory is None:
+        return None
+
+    found = []
+    current = os.path.abspath(directory)
+
+    while True:
+        if os.path.exists(os.path.join(current, cfg.CONFIG_NAME)):
+            loaded, _ = cfg.load(current)
+            found.append(loaded if isinstance(loaded, dict) else {})
+
+        parent = os.path.dirname(current)
+
+        if os.path.exists(os.path.join(current, ".git")) or parent == current:
+            break
+
+        current = parent
+
+    return found or [{}]
+
+
+located = locate(parsed)
+
+#: The configurations this line answers to: every directory a command acts in, and the
+#: session anchor. Rules combine toward the strictest - protected branches and declared bans
+#: are united, permitted package managers are intersected per command - so stepping into a
+#: directory with a laxer (or no) config can only add restrictions, never remove them.
+#: Found in review: taking one config from the first `cd` let `cd /tmp/x && cd repo && ...`
+#: drop the repository's integration branch, its bans and its package-manager list.
+touched = [(git_invocation(tokens, where) or (None, None, where))[2]
+           for tokens, where in located]
+governing = [configs_for(directory) for directory in touched] + [configs_for(anchor)]
+all_configs = [c for group in governing if group for c in group]
 
 
 # --- RULE-INSTALLS: the machine is the owner's ----------------------------------------------
@@ -417,16 +512,37 @@ def package_invocation(tokens):
     return None
 
 
-permitted = allowed_managers(config)
+#: Options that point a package manager at another directory than the one it runs in.
+ELSEWHERE_OPTIONS = ("--prefix", "--cwd", "--dir", "--target", "--root", "--project",
+                     "--directory", "--manifest-path", "--global-dir")
 
-for tokens in parsed:
+
+def permitted_in(directory):
+    """The package managers every config governing `directory` allows."""
+    governing_here = configs_for(directory)
+
+    if not governing_here:
+        return set()
+
+    allowed = [allowed_managers(c) for c in governing_here]
+    return set.intersection(*allowed) if allowed else set()
+
+
+for tokens, where in located:
     invocation = package_invocation(tokens)
 
     if not invocation:
         continue
 
     manager, arguments = invocation
+    permitted = permitted_in(where)
     pip_family = {"pip", "pip3"}
+
+    if has_option(arguments, ELSEWHERE_OPTIONS, "Ct"):
+        block(
+            f"Blocked by RULE-DEPENDENCIES: '{manager}' pointed at another directory. Run it "
+            "from the project it installs into, so that project's rules are the ones applied."
+        )
 
     if not (manager in permitted or (manager in pip_family and permitted & pip_family)):
         block(
@@ -463,24 +579,39 @@ for tokens in parsed:
 MAINLINE = {"main", "master"}
 WORK_BRANCH = re.compile(r"^(feature|fix|chore|docs|refactor|test|ci)/[a-z0-9][a-z0-9._-]*$")
 
-declared_integration = (config or {}).get("integrationBranch", "dev")
-integration_valid = (isinstance(declared_integration, str)
-                     and re.match(r"^[A-Za-z0-9._/-]+$", declared_integration)
-                     and declared_integration not in MAINLINE
-                     and not WORK_BRANCH.match(declared_integration))
-INTEGRATION = declared_integration if integration_valid else "dev"
-PROTECTED = MAINLINE | {INTEGRATION}
+def integration_of(config):
+    """A config's integration branch, or None when the declared value is not acceptable."""
+    declared = config.get("integrationBranch", "dev")
+    valid = (isinstance(declared, str) and re.match(r"^[A-Za-z0-9._/-]+$", declared)
+             and declared not in MAINLINE and not WORK_BRANCH.match(declared))
+    return declared if valid else None
 
-if not integration_valid and any(command_name(t[0]) in {"git", "gh"} for t in parsed):
+
+invalid = [c.get("integrationBranch") for c in all_configs if integration_of(c) is None]
+
+if invalid and any(command_name(t[0]) in {"git", "gh"} for t in parsed):
     block(
-        f"Blocked by RULE-GIT: 'integrationBranch' in {cfg.CONFIG_NAME} is "
-        f"{declared_integration!r}. It must be a branch name that is neither the mainline "
-        f"({', '.join(sorted(MAINLINE))}) nor a work branch. Ask the owner to fix it."
+        f"Blocked by RULE-GIT: 'integrationBranch' in {cfg.CONFIG_NAME} is {invalid[0]!r}. It "
+        f"must be a branch name that is neither the mainline ({', '.join(sorted(MAINLINE))}) "
+        "nor a work branch. Ask the owner to fix it."
     )
+
+#: Every integration branch of every repository this line touches, and `dev` always. A branch
+#: protected anywhere on the line is protected everywhere on it.
+PROTECTED = MAINLINE | {"dev"} | {integration_of(c) for c in all_configs}
+INTEGRATION = "/".join(sorted(PROTECTED - MAINLINE))
+
+
+def integration_in(directory):
+    """The one integration branch of the repository a gh command runs in, or None when it is
+    unknown or the governing configs disagree."""
+    names = {integration_of(c) for c in configs_for(directory) or []}
+    return names.pop() if len(names) == 1 else None
 
 GIT_ALLOWED = {
     "status", "diff", "log", "show", "blame", "rev-parse", "ls-files", "shortlog", "describe",
     "grep", "help", "var", "reflog", "ls-remote", "merge-base", "rev-list", "cat-file",
+    "check-ignore",
     "ls-tree", "for-each-ref", "show-ref", "name-rev",
     "add", "commit", "restore", "stash", "rm", "mv", "revert", "cherry-pick", "reset",
     "branch", "checkout", "switch", "worktree",
@@ -491,10 +622,6 @@ GIT_ALLOWED = {
 #: Subcommands whose meaning depends on arguments the guard must be able to read.
 GIT_WRITES = {"commit", "merge", "cherry-pick", "revert", "push", "pull", "reset", "branch",
               "remote", "config", "tag", "switch", "checkout", "worktree"}
-
-#: Options of `git` itself that take a value, so the value is not read as the subcommand.
-GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
-                     "--config-env"}
 
 PUSH_VALUE_OPTIONS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
 PUSH_BANNED_LONG = ("--force", "--force-with-lease", "--force-if-includes", "--all",
@@ -521,36 +648,6 @@ def current_branch(where):
         return None
 
     return proc.stdout.strip() if proc.returncode == 0 else None
-
-
-def git_invocation(tokens, where):
-    """(subcommand, arguments, working directory, git-level -c values) for git, or None."""
-    if command_name(tokens[0]) != "git":
-        return None
-
-    overrides = []
-    index = 1
-
-    while index < len(tokens) and tokens[index].startswith("-"):
-        option = tokens[index]
-        name = option.split("=", 1)[0]
-        value = option.split("=", 1)[1] if "=" in option else None
-
-        if name in GIT_VALUE_OPTIONS and value is None:
-            value = tokens[index + 1] if index + 1 < len(tokens) else ""
-            index += 1
-
-        if name == "-C" and where is not None:
-            where = os.path.join(where, value)
-        elif name in {"-c", "--config-env"}:
-            overrides.append(value or "")
-
-        index += 1
-
-    if index >= len(tokens):
-        return None
-
-    return tokens[index], tokens[index + 1:], where, overrides
 
 
 def positional(arguments, value_options=()):
@@ -589,15 +686,7 @@ def push_destinations(arguments, where):
     return destinations
 
 
-where = shell_cwd
-
-for tokens in parsed:
-    if command_name(tokens[0]) in {"cd", "pushd"}:
-        target = tokens[1] if len(tokens) > 1 else "~"
-        where = None if re.search(r"[$~`]|^-$", target) or target == MASK or where is None \
-            else os.path.join(where, target)
-        continue
-
+for tokens, where in located:
     invocation = git_invocation(tokens, where)
 
     if not invocation:
@@ -778,14 +867,14 @@ def gh_argv():
     return ["gh"]
 
 
-def pull_request_state(arguments):
+def pull_request_state(arguments, where):
     """The pull request a merge would act on, as a validated dict, or None."""
     target = positional(arguments)[:1]
 
     try:
         proc = subprocess.run(
             gh_argv() + ["pr", "view", *target, "--json", "baseRefName,statusCheckRollup,state"],
-            cwd=shell_cwd, capture_output=True, encoding="utf-8", errors="replace", timeout=20,
+            cwd=where, capture_output=True, encoding="utf-8", errors="replace", timeout=20,
         )
         state = json.loads(proc.stdout) if proc.returncode == 0 else None
     except (OSError, ValueError, subprocess.TimeoutExpired):
@@ -804,9 +893,26 @@ def check_passed(check):
     return str(check.get("conclusion") or check.get("state") or "").upper() in GREEN
 
 
-for tokens in parsed:
+for tokens, where in located:
     if command_name(tokens[0]) != "gh":
         continue
+
+    INTEGRATION = integration_in(where)
+
+    if len(tokens) > 2 and tokens[1] == "pr" and tokens[2] in {"create", "edit", "merge"} \
+            and (option_values(tokens[3:], "--repo", "-R")
+                 or any(tok.startswith("--repo=") for tok in tokens[3:])):
+        block(
+            "Blocked by RULE-GIT: '--repo' points the pull request at a repository whose "
+            "integration branch the guard has not read. Run gh from that repository's checkout."
+        )
+
+    if INTEGRATION is None and len(tokens) > 2 and tokens[1] == "pr" \
+            and tokens[2] in {"create", "edit", "merge"}:
+        block(
+            "Blocked by RULE-GIT: cannot tell which integration branch this pull request belongs "
+            "to - the directory is unknown, or its configs disagree. Run gh from the repository."
+        )
 
     group = tokens[1] if len(tokens) > 1 else ""
     verb = tokens[2] if len(tokens) > 2 else ""
@@ -862,7 +968,7 @@ for tokens in parsed:
         if has_option(arguments, ("--admin",)):
             block("Blocked by RULE-GIT: '--admin' bypasses the checks the merge depends on.")
 
-        state = pull_request_state(arguments)
+        state = pull_request_state(arguments, where)
 
         if state is None:
             block(
@@ -891,7 +997,7 @@ for tokens in parsed:
 
 
 # --- Project-specific bans, declared in .dev-factory.json -----------------------------------
-for entry in (config or {}).get("blockedCommands") or []:
+for entry in [e for c in all_configs for e in (c.get("blockedCommands") or [])]:
     if not isinstance(entry, dict) or not isinstance(entry.get("pattern"), str):
         continue
 

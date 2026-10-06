@@ -34,18 +34,24 @@ def git(root, *args):
     return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
 
 
-def guard(command, root, pull_request=None):
-    env = {**os.environ, "CLAUDE_PROJECT_DIR": root,
+def guard(command, root, pull_request=None, cwd=None, anchor=None):
+    """Run the guard as the harness does. `anchor` is the session's project directory and
+    `cwd` the shell's, both defaulting to the test repository."""
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": anchor or root,
            "DEV_FACTORY_GH": os.path.join(root, "fake_gh.py")}
     env.pop("FAKE_PR", None)
 
     if pull_request is not None:
         env["FAKE_PR"] = json.dumps(pull_request)
 
+    payload = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+    if cwd is not None:
+        payload["cwd"] = cwd
+
     proc = subprocess.run(
         [sys.executable, os.path.join(HOOKS, "guard_bash.py")],
-        input=json.dumps({"tool_name": "Bash", "tool_input": {"command": command}}),
-        capture_output=True, text=True, cwd=root, env=env,
+        input=json.dumps(payload), capture_output=True, text=True, cwd=root, env=env,
     )
 
     return proc.returncode, proc.stderr
@@ -208,7 +214,8 @@ class WhatIsNeverAllowed(unittest.TestCase):
     def test_reading_remotes_tags_and_config_is_allowed(self):
         with Repo("feature/3-orders") as root:
             for command in ("git remote -v", "git remote get-url origin", "git tag",
-                            "git tag -l", "git config --get user.name"):
+                            "git tag -l", "git config --get user.name",
+                            "git check-ignore -v .env", "git merge-base dev HEAD"):
                 self.assertEqual(ALLOW, guard(command, root)[0], command)
 
     def test_a_push_whose_destination_cannot_be_determined_is_blocked(self):
@@ -338,6 +345,12 @@ class BypassesFoundInReview(unittest.TestCase):
             finally:
                 shutil.rmtree(other, ignore_errors=True)
 
+    def test_popd_is_not_ignored(self):
+        # `popd` returns to the directory before `pushd`. Read as an ordinary command, the
+        # guard would judge the commit in the work-branch repository it had pushed into.
+        with Repo("dev") as root, Repo("feature/1-x") as other:
+            self.assertBlocked(root, f"pushd {other} && popd && git commit -m x")
+
     def test_wrappers_and_shell_syntax_are_looked_through(self):
         with Repo("feature/1-x") as root:
             self.assertBlocked(root, "env git push -f origin dev", "eval git push -f origin dev",
@@ -414,6 +427,57 @@ class TheIntegrationBranchSetting(unittest.TestCase):
             self.assertEqual(BLOCK, guard('git commit -m "x"', root)[0])
             self.assertEqual(ALLOW, guard("gh pr create --base develop --fill", root)[0])
             self.assertEqual(BLOCK, guard("gh pr create --base dev --fill", root)[0])
+
+    def test_the_integration_branch_survives_a_detour(self):
+        # Review: with the config taken from the first `cd` or from an unrelated shell
+        # directory, `develop` stopped being protected.
+        with Repo("develop") as root:
+            self.write_config(root, "develop")
+            empty = tempfile.mkdtemp(prefix="gitrules-empty-")
+            try:
+                # The session is anchored elsewhere too, so only the repository the command
+                # acts in can supply `develop`.
+                # `-C` after another git option that takes a value: a second parser of git's
+                # options once stopped at `user.name=a` and never saw the `-C`.
+                for command in (f"cd {empty} && cd {root} && git commit -m x",
+                                f"git -C {root} commit -m x",
+                                f"git -c user.name=a -C {root} commit -m x",
+                                f"git --work-tree {root} -C {root} commit -m x"):
+                    code, stderr = guard(command, root, cwd=empty, anchor=empty)
+                    self.assertEqual(BLOCK, code, f"{command}: {stderr}")
+
+                code, _ = guard(f"cd {empty} && cd {root} && gh pr create --base dev --fill",
+                                root, cwd=empty, anchor=empty)
+                self.assertEqual(BLOCK, code)
+
+                # --repo names a repository whose config the guard has not read.
+                code, stderr = guard("gh pr create --repo o/r --base develop --fill", root)
+                self.assertEqual(BLOCK, code)
+                self.assertIn("--repo", stderr)
+
+                # A directory the guard cannot follow has no known integration branch.
+                code, stderr = guard("cd $HOME && gh pr create --base dev --fill", root)
+                self.assertEqual(BLOCK, code)
+                self.assertIn("cannot tell which integration branch", stderr)
+            finally:
+                shutil.rmtree(empty, ignore_errors=True)
+
+    def test_a_nested_config_cannot_unprotect_the_integration_branch(self):
+        with Repo("develop") as root:
+            self.write_config(root, "develop")
+            sub = os.path.join(root, "fixtures")
+            os.makedirs(sub)
+
+            with open(os.path.join(sub, ".dev-factory.json"), "w", encoding="utf-8") as f:
+                json.dump(CONFIG, f)
+
+            empty = tempfile.mkdtemp(prefix="gitrules-empty-")
+            try:
+                code, stderr = guard('git commit -m "x"', root, cwd=sub, anchor=empty)
+            finally:
+                shutil.rmtree(empty, ignore_errors=True)
+
+        self.assertEqual(BLOCK, code, stderr)
 
     def test_the_mainline_or_a_malformed_value_is_refused(self):
         for value in ("main", "master", ["dev"], "feature/1-x"):
