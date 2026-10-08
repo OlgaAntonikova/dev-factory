@@ -284,16 +284,17 @@ class BytecodeCannotLie(unittest.TestCase):
 
 
 #: A build that, like make or MSBuild, rebuilds its output only when the source is newer, then
-#: tests the output.
+#: tests the output. The output is executed from its text, not imported: an imported copy would
+#: bring Python's own bytecode cache into a test about the build's timestamps.
 TIMESTAMP_BUILD = [sys.executable, "-c", (
     "import os, shutil, sys\n"
     "src, out = 'guard.py', os.path.join('out', 'guard.py')\n"
     "if not os.path.exists(out) or os.stat(src).st_mtime_ns > os.stat(out).st_mtime_ns:\n"
     "    os.makedirs('out', exist_ok=True)\n"
     "    shutil.copyfile(src, out)\n"
-    "sys.path.insert(0, 'out')\n"
-    "import guard\n"
-    "sys.exit(0 if guard.allowed(6) is False else 1)\n"
+    "built = {}\n"
+    "exec(open(out, encoding='utf-8').read(), built)\n"
+    "sys.exit(0 if built['allowed'](6) is False else 1)\n"
 )]
 HOUR_NS = 3_600_000_000_000
 
