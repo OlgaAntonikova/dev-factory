@@ -21,6 +21,7 @@ The unit of work is a **phase** (from the spec). The unit of iteration is a **ta
 - **Spec matrices become `[Theory]`/parameterized tests, row by row.** If the spec contains a table of input → expected verdict, every row is a test case with inline data. Add the standard edge rows the spec authors always forget: empty input, whitespace-only, oversized input, mixed encodings/scripts.
 - **Test-first is mandatory only for the named hard classes** (the spec names them). For those, target branch coverage explicitly. For everything else, tests accompany the code but need not precede it.
 - **Every validator gets a negative test**: prove the check *rejects* a deliberately broken input. A validate step that has never failed is not known to work.
+- **Every guard is mutation-proven** (`RULE-MUTATION-PROOF`) with `python3 ${CLAUDE_PLUGIN_ROOT}/tools/mutate.py --root <repo> --file <path> --find <line> --replace <broken line> -- <the tests that guard it>`. One `--find`/`--replace` pair per mutant; the tool restores the file's bytes and verifies them by hash, stamps the mutant and the restored file so timestamp-driven builds (make, MSBuild, bytecode caches) rebuild each; if a restore ever fails it stops and prints where the original copy is. Quote its `KILLED` lines in the pull request; a `SURVIVED` mutant means the test does not observe what it is named for.
 
 ### 2. Green — implement the minimum that passes
 
@@ -62,6 +63,8 @@ Determinism rule for any tooling you build along the way: pinned model/tool vers
 5. `gh pr checks --watch`. Red: read the failing run (`gh run view --log-failed`), fix on the same branch, push again. Never merge around a red check.
 6. Green and `APPROVE`: `gh pr merge --squash --delete-branch`, then switch back to `dev` and pull. The guard refuses a merge into anything but `dev`, or with any check red, pending or missing.
 7. `main`/`master` is never touched. The release pull request from `dev` is the owner's.
+
+Steps 4 to 6 are one command once the reviewed commit is made: `python3 ${CLAUDE_PLUGIN_ROOT}/tools/ship.py --root <repo> --title <title> --body-file <file>` (`--no-merge` stops at green). It shows every command to the guard before running it (pass `--anchor <dir>` when the session is anchored outside the repository, so the guard applies that directory's rules too), merges only the commit it pushed (`--match-head-commit`), reopens a pull request whose CI never started, and stops on red without merging; after a fix, commit and run it again - the open pull request is reused. Step 3 (local CI parity) and the commit itself stay yours.
 
 ## Phase closing (gate protocol)
 
