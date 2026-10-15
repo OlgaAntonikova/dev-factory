@@ -100,6 +100,28 @@ counts as source. `STACK.md` has the schema. Without it the stop gate blocks rat
 skipping, which is deliberate — a gate that cannot find its build command knows nothing about
 the project, and saying nothing is indistinguishable from saying it is fine.
 
+### 3c. Logging — where failures become visible
+
+`RULE-LOGGING` is core, and the rule alone does not say enough to build from. The spec answers,
+concretely:
+
+- **Library and setup** — the one logger (pinned like any dependency), configured once at
+  startup. Bare `print`/`console.log` is not logging.
+- **Destination and format** — where logs go in development and in production (stdout for a
+  container platform, a rotating file, a hosted collector), structured (JSON) or plain, and the
+  retention.
+- **Levels** — what is `INFO` (startup, each request or job with its outcome and duration),
+  `WARNING` (rejected input, retries) and `ERROR` (every caught failure, with operation, context
+  and stack).
+- **Correlation** — a request or job id carried through every line, so one failure can be
+  followed end to end.
+- **Redaction list** — the named secret fields and patterns (tokens, keys, passwords, signed
+  payloads, payment and personal data) the logger strips itself.
+- **Alerting** — how an `ERROR` reaches a human, and how fast. "Someone reads the log" is not an
+  answer; a chat message, an e-mail or a monitored dashboard is.
+
+Phase 0 delivers this, with its tests: the logger exists before any feature that could fail.
+
 ### 4. Machine-checkable invariants
 
 Turn methodology claims into CI checks. For every "principle" in the domain doc, ask: *can a validator reject a violation?* If yes, specify the check and require a test proving the validator rejects a deliberately broken input.

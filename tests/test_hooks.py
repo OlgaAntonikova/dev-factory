@@ -23,6 +23,15 @@ BLOCK = 2
 OK_COMMAND = [sys.executable, "-c", "pass"]
 FAILING_COMMAND = [sys.executable, "-c", "import sys; sys.stderr.write('boom'); sys.exit(1)"]
 
+#: Succeeds only when the interpreter that runs it is a virtual environment's.
+INSIDE_A_VENV = ["python", "-c", "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"]
+
+
+def make_venv(root):
+    """A real, pip-less virtual environment at <root>/.venv."""
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", os.path.join(root, ".venv")],
+                   check=True, capture_output=True)
+
 
 def run_hook(name, payload, root):
     proc = subprocess.run(
@@ -90,13 +99,23 @@ class GuardStackIndependence(unittest.TestCase):
         self.assertEqual(ALLOW, self.guard("dotnet restore", DOTNET))
         self.assertEqual(ALLOW, self.guard("pip install -r requirements.txt", PYTHON))
 
-    def test_adding_a_dependency_is_blocked(self):
-        self.assertEqual(BLOCK, self.guard("npm install left-pad", NODE))
+    def test_adding_a_dependency_to_the_project_is_allowed(self):
+        # RULE-DEPENDENCIES, owner's decision of 2026-10-06: the agent adds dependencies itself
+        # and pins the exact version in the declared file in the same change.
+        self.assertEqual(ALLOW, self.guard("npm install left-pad@1.3.0", NODE))
+        self.assertEqual(ALLOW, self.guard("cargo add serde", RUST))
+        self.assertEqual(ALLOW, self.guard("pip install requests==2.32.3", PYTHON))
+        self.assertEqual(ALLOW, self.guard("python -m pip install requests==2.32.3", PYTHON))
+        self.assertEqual(ALLOW, self.guard("dotnet add package Newtonsoft.Json", DOTNET))
+
+    def test_installing_for_the_whole_machine_is_blocked(self):
         self.assertEqual(BLOCK, self.guard("npm i -g typescript", NODE))
-        self.assertEqual(BLOCK, self.guard("cargo add serde", RUST))
+        self.assertEqual(BLOCK, self.guard("npm install --global typescript", NODE))
         self.assertEqual(BLOCK, self.guard("cargo install ripgrep", RUST))
-        self.assertEqual(BLOCK, self.guard("pip install requests", PYTHON))
-        self.assertEqual(BLOCK, self.guard("dotnet add package Newtonsoft.Json", DOTNET))
+        self.assertEqual(BLOCK, self.guard("pip install --user requests", PYTHON))
+        self.assertEqual(BLOCK, self.guard("python -m pip install --user requests", PYTHON))
+        self.assertEqual(BLOCK, self.guard("dotnet tool install -g dotnet-ef", DOTNET))
+        self.assertEqual(BLOCK, self.guard("dotnet workload install maui", DOTNET))
 
     def test_a_foreign_package_manager_is_blocked_outright(self):
         self.assertEqual(BLOCK, self.guard("pip install requests", NODE))
@@ -108,7 +127,7 @@ class GuardStackIndependence(unittest.TestCase):
     def test_the_reason_names_the_rule(self):
         # The agent reads this message and has to know which rule it met.
         with TempProject(NODE) as root:
-            _, stderr = run_hook("guard_bash.py", bash("npm install left-pad"), root)
+            _, stderr = run_hook("guard_bash.py", bash("pip install requests"), root)
 
         self.assertIn("RULE-DEPENDENCIES", stderr)
 
@@ -131,13 +150,11 @@ class GuardTheLawThatNeverDependsOnTheStack(unittest.TestCase):
         self.assertEqual(ALLOW, self.guard('git commit -m "x"'))
         self.assertEqual(ALLOW, self.guard("git diff --stat"))
 
-    def test_the_agent_may_not_publish_or_rewrite(self):
-        # `git push` is deliberately absent here. Under RULE-GIT variant B it is conditional -
-        # allowed onto a phase branch, blocked everywhere else - so asserting it in this list
-        # would pass for the wrong reason: these temp directories are not git repositories, so
-        # the guard blocks the push for having an undeterminable destination rather than for
-        # the reason this test is named after. tests/test_git_rules.py covers push properly,
-        # against a real repository on a known branch.
+    def test_the_agent_may_not_rewrite_or_target_the_mainline(self):
+        # `git push` is deliberately absent here: it is conditional on the branch, and these
+        # temp directories are not git repositories, so it would be blocked for having an
+        # undeterminable destination rather than for the reason this test is named after.
+        # tests/test_git_rules.py covers push against a real repository on a known branch.
         for command in ("git remote add origin x", "git rebase -i HEAD~2",
                         "git commit --amend", "git commit --no-verify -m x", "gh pr create"):
             self.assertEqual(BLOCK, self.guard(command), command)
@@ -154,6 +171,72 @@ class GuardTheLawThatNeverDependsOnTheStack(unittest.TestCase):
     def test_ordinary_commands_are_allowed(self):
         for command in ("ls -la", "cat README.md", "grep -rn TODO src/"):
             self.assertEqual(ALLOW, self.guard(command), command)
+
+
+class GuardReadsTheRepositoryTheCommandRunsIn(unittest.TestCase):
+    """Found on the first multi-repository session: the guard read the session anchor's
+    .dev-factory.json, so a command run in another repository met the wrong project's rules."""
+
+    def guard(self, command, anchor, cwd):
+        return run_hook("guard_bash.py", dict(bash(command), cwd=cwd), anchor)[0]
+
+    def test_the_shell_directory_decides_not_the_session_anchor(self):
+        with TempProject(None) as anchor, TempProject(PYTHON) as project:
+            self.assertEqual(ALLOW, self.guard("pip install pytest==8.3.3", anchor, project))
+            self.assertEqual(BLOCK, self.guard("pip install pytest==8.3.3", anchor, anchor))
+
+    def test_a_leading_cd_decides(self):
+        with TempProject(None) as anchor, TempProject(PYTHON) as project:
+            command = f"cd {project} && pip install pytest==8.3.3"
+            self.assertEqual(ALLOW, self.guard(command, anchor, anchor))
+
+    def test_the_other_project_is_held_to_its_own_rules(self):
+        # The anchor allows pip; the repository the command runs in is a Node project.
+        with TempProject(PYTHON) as anchor, TempProject(NODE) as project:
+            self.assertEqual(BLOCK, self.guard("pip install requests==2.32.3", anchor, project))
+
+    def test_stepping_through_a_laxer_directory_does_not_lax_the_repository(self):
+        # Review of the first fix: the config was taken from the first `cd`, so a detour
+        # through a directory with a permissive config changed which rules applied.
+        with TempProject(None) as anchor, TempProject(PYTHON) as project, \
+                TempProject(NODE) as lax:
+            for command in (f"cd {lax} && cd {project} && npm install left-pad@1.3.0",
+                            f"cd {lax} && npm install --prefix {project} left-pad@1.3.0"):
+                self.assertEqual(BLOCK, self.guard(command, anchor, anchor), command)
+
+    def test_a_cd_into_another_project_brings_its_rules(self):
+        # The shell sits in a pip project; the command moves into a Node project first.
+        with TempProject(None) as anchor, TempProject(PYTHON) as here, \
+                TempProject(NODE) as there:
+            command = f"cd {there} && pip install requests==2.32.3"
+            self.assertEqual(BLOCK, self.guard(command, anchor, here))
+
+    def test_a_declared_ban_survives_a_detour(self):
+        banned = dict(PYTHON, blockedCommands=[{"pattern": r"rm\s+-rf\s+build",
+                                                "reason": "the build dir is shared"}])
+
+        with TempProject(None) as anchor, TempProject(banned) as project, \
+                TempProject(None) as empty:
+            command = f"cd {empty} && cd {project} && rm -rf build"
+            self.assertEqual(BLOCK, self.guard(command, anchor, anchor))
+
+    def test_a_nested_config_adds_rules_and_never_replaces_them(self):
+        # A subdirectory's own .dev-factory.json (a monorepo package, a fixture) is governed
+        # by the repository's config as well; a package manager must be allowed by both.
+        with TempProject(None) as anchor, TempProject(PYTHON) as project:
+            sub = os.path.join(project, "packages", "web")
+            os.makedirs(sub)
+
+            with open(os.path.join(sub, ".dev-factory.json"), "w", encoding="utf-8") as f:
+                json.dump(NODE, f)
+
+            self.assertEqual(BLOCK, self.guard("npm install left-pad@1.3.0", anchor, sub))
+
+    def test_a_subdirectory_belongs_to_its_repository(self):
+        with TempProject(None) as anchor, TempProject(PYTHON) as project:
+            sub = os.path.join(project, "app", "deep")
+            os.makedirs(sub)
+            self.assertEqual(ALLOW, self.guard("pip install pytest==8.3.3", anchor, sub))
 
 
 class GuardProjectDeclaredBans(unittest.TestCase):
@@ -386,6 +469,64 @@ class StopGate(unittest.TestCase):
 
         self.assertEqual(ALLOW, code)
 
+    def test_python_runs_inside_the_projects_virtual_environment(self):
+        with TempProject({"version": 1, "build": OK_COMMAND, "test": INSIDE_A_VENV}) as root:
+            make_venv(root)
+            self.arm(root)
+            code, stderr = self.stop(root)
+
+        self.assertEqual(ALLOW, code, stderr)
+
+    def test_a_venv_without_pyvenv_cfg_is_not_used(self):
+        outside = ["python", "-c", "import sys; sys.exit(0 if sys.prefix == sys.base_prefix else 1)"]
+
+        with TempProject({"version": 1, "build": OK_COMMAND, "test": outside}) as root:
+            make_venv(root)
+            os.remove(os.path.join(root, ".venv", "pyvenv.cfg"))
+            self.arm(root)
+            code, stderr = self.stop(root)
+
+        self.assertEqual(ALLOW, code, stderr)  # the system interpreter ran, not the venv's
+
+    def test_a_command_file_planted_in_the_repository_is_never_run(self):
+        command = ["python3", "-c", "import sys; sys.exit(1)"]
+
+        with TempProject({"version": 1, "build": OK_COMMAND, "test": command}) as root:
+            for name in ("python3.cmd", "python3.bat", "python3"):
+                path = os.path.join(root, name)
+                with open(path, "w") as planted:
+                    planted.write("@exit /b 0\n" if name.endswith((".cmd", ".bat")) else
+                                  "#!/bin/sh\nexit 0\n")
+                os.chmod(path, 0o755)
+
+            self.arm(root)
+            code, _ = self.stop(root)
+
+        self.assertEqual(BLOCK, code)
+
+    def test_only_the_python_interpreter_is_redirected_into_the_venv(self):
+        probe = "devfactory-venv-probe"
+
+        with TempProject({"version": 1, "build": OK_COMMAND, "test": [probe]}) as root:
+            make_venv(root)
+            scripts = os.path.join(root, ".venv", "Scripts" if os.name == "nt" else "bin")
+            # A real executable that succeeds: on Windows the venv's own launcher under another
+            # name (it exits 0 on an empty stdin), elsewhere a shell script.
+            if os.name == "nt":
+                import shutil
+
+                shutil.copy(os.path.join(scripts, "python.exe"), os.path.join(scripts, probe + ".exe"))
+            else:
+                path = os.path.join(scripts, probe)
+                with open(path, "w") as script:
+                    script.write("#!/bin/sh\nexit 0\n")
+                os.chmod(path, 0o755)
+
+            self.arm(root)
+            code, stderr = self.stop(root)
+
+        self.assertEqual(BLOCK, code)
+        self.assertIn("could not run", stderr)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

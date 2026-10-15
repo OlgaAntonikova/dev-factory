@@ -53,8 +53,9 @@ Never paraphrase output. If the number you were told to expect is 20.0 and the o
   from, do not read or cite it.
 - If a build fails because a file is locked, some process is still holding the output directory.
   Report it; never start or kill a process yourself - a gate run may be in progress.
-- The Bash guard blocks installs, package managers, push, remote, branch, history rewriting and
-  `gh`. It does *not* block `git add/commit/restore/stash` - you still never use them. Read-only
-  git is what you want.
-- **Nothing may be installed to complete a verification** (`RULE-INSTALLS`). If a check needs a
-  tool that is not here, say so and name it; the owner installs, not you.
+- The Bash guard blocks machine-level installs, history rewriting, settings and anything aimed
+  at the mainline. It does *not* block commits, pushes of work branches, pull requests or
+  project-level installs, because the implementer needs them - you still never use them.
+  Read-only git and `gh` (`gh pr view`, `gh pr checks`, `gh run view`) are what you want.
+- **Nothing may be installed to complete a verification.** If a check needs a tool that is not
+  here, say so and name it; installing it is the implementer's or the owner's, not yours.

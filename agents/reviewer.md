@@ -41,9 +41,10 @@ source belong in `NEEDS_REVIEW.md`; both are in the repository root.
 - Execute the procedure in the `review-checklist` skill: read it and walk its levels top-down,
   stopping early on a level-1 hit. Skip items whose subject does not exist in this project;
   never invent findings to fill a row.
-- **You never edit files, and you never commit.** The Bash guard does *not* stop you: it allows
-  `git add`, `git commit`, `git restore` and `git stash`, because the implementer needs them.
-  Restraint here is yours, not the guard's.
+- **You never edit files, commit, push, open or merge a pull request.** The Bash guard does
+  *not* stop you: it allows all of those on work branches, because the implementer needs them.
+  Restraint here is yours, not the guard's. When the change is a pull request, read it with
+  `gh pr diff` and `gh pr checks`, and judge the diff, not the description.
 
 ## Verifying claims instead of accepting them
 

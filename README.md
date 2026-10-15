@@ -1,6 +1,9 @@
 # dev-factory
 
-A development process as an installable plugin. The process lives here; the projects it is
+[![ci](https://github.com/OlgaAntonikova/dev-factory/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/OlgaAntonikova/dev-factory/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+A [Claude Code](https://claude.com/claude-code) plugin: a development process as an installable plugin. The process lives here; the projects it is
 used on stay clean of it.
 
 - **Knowledge** in skills — how to write a spec, how to run a build loop, how to review.
@@ -12,8 +15,8 @@ A new application is then: a new repository, this plugin installed, and a spec.
 
 ## Status
 
-**0.1.0 — under construction.** Extracted from a first project that ran nine phases under this
-process. What exists so far:
+**0.3.0.** Extracted from a real project that ran nine phases under this process, and used on
+the projects since. What exists:
 
 | Piece | State |
 |---|---|
@@ -22,11 +25,25 @@ process. What exists so far:
 | `hooks/` | **written and stack-independent** — every guard proven by mutation |
 | `tools/repo_scan.py` — one pass over a repository | **written**; also the project grid's scanner (see `ROADMAP.md`) |
 | `tools/spec_doctor.py` — checks a repository against the contract | **written** |
+| `tools/mutate.py` — mutation proof of one guard, file always restored | **written** |
+| `tools/ship.py` — push, pull request, CI, merge, each command judged by the guard | **written** |
 | `skills/` | **moved in** — `spec-writing`, `build-loop`, `review-checklist` |
 | `agents/` | **moved in** — `reviewer` (opus), `scout` (haiku), `verifier` (opus) |
 | Migration of the first project onto the contract | **done** — `spec-doctor` green, reviewed to APPROVE |
 
-48 tests, and every guard in them has been mutated and watched to fail. See `ROADMAP.md`.
+207 tests. The guards of the hooks have each been mutated and watched to fail, and so have those of the two newest tools, using `tools/mutate.py` on itself. See `ROADMAP.md`.
+
+## Installing
+
+In Claude Code:
+
+```text
+/plugin marketplace add OlgaAntonikova/dev-factory
+/plugin install dev-factory@dev-factory
+```
+
+Then give each project a `.dev-factory.json` with its build and test commands (see
+[`STACK.md`](STACK.md)). Until it exists, the stop gate blocks instead of guessing.
 
 ## Requirements
 
@@ -42,6 +59,32 @@ python3 tools/spec_doctor.py /path/to/project
 ```
 
 Add `--no-run` to skip actually executing the project's build and test commands.
+
+Prove a guard test (`RULE-MUTATION-PROOF`): each `--find`/`--replace` pair is one mutant, tried
+alone against the original. Its bytes are restored and verified by hash; the mutant is stamped
+newer than everything built before it and the restored file newer than the mutant, so make,
+MSBuild and bytecode caches rebuild each, and Python writes no bytecode during the run. A restore
+that fails stops the run and names the kept copy. Without
+a command after `--`, the project's `fastTest` (else `test`) runs.
+
+```bash
+python3 tools/mutate.py --root /path/to/project --file src/app/limits.py \
+    --find "if amount > limit:" --replace "if False:" \
+    -- python -m pytest -q tests/test_limits.py
+```
+
+Ship a reviewed, committed work branch (`RULE-GIT`): push, open or reuse the pull request into
+`dev`, wait for CI (reopening the pull request once if GitHub never starts the run), watch it,
+merge when green, switch back and pull. The commit stays a plain `git commit`, where the review
+gate checks the stamp. A tool's subprocesses are invisible to the guard hook, so `ship.py` shows
+every command to `hooks/guard_bash.py` itself and runs only what it allows. The guard also
+reads the session's anchor directory, which a tool cannot see: it is `--anchor`, else
+`CLAUDE_PROJECT_DIR`, else `--root`. The merge names the commit that CI ran on
+(`--match-head-commit`).
+
+```bash
+python3 tools/ship.py --root /path/to/project --title "feat: ..." --body-file pr.md
+```
 
 Test the plugin itself:
 
@@ -91,7 +134,25 @@ Project-specific knowledge that used to live in a local agent belongs in the `no
 `.dev-factory.json`: which flag turns a test run into a silent no-op, which build mode skips a
 compilation step. The plugin's agents are told to read it.
 
+## Release hygiene: the version is the cache key
+
+Installed plugins are cached per version under `~/.claude/plugins/cache`. A development
+install runs straight from this repository, and nothing refreshes the cached copy of the
+*same* version when source files change — the law that runs and the copy people read then
+silently disagree. This happened: a reviewer cited an encoding bug in the cached
+`review_gate.py` that the source had already fixed.
+
+So: **any change under `hooks/`, `tools/`, `skills/` or `agents/` bumps the version in
+`.claude-plugin/plugin.json`** — that is what makes the cache refresh on reinstall. The
+`cache_parity.py` SessionStart hook is the tripwire for the sessions in between: it compares
+the running plugin root with the cache entry of the same version and names every file that
+disagrees. It warns; it never blocks.
+
 ## Not part of the plugin
 
 The project layer stays in the project repository: `CLAUDE.md`, the spec itself, domain-specific
 skills, concrete stack versions, end-to-end configuration.
+
+## License
+
+[MIT](LICENSE)

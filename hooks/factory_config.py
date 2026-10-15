@@ -20,6 +20,12 @@ import os
 
 CONFIG_NAME = ".dev-factory.json"
 
+#: Project-local Python virtual environments, in the order they are looked for.
+VENV_DIRS = (".venv", "venv")
+
+#: First words that name the Python interpreter - the only ones ever redirected into a venv.
+PYTHON_COMMANDS = ("python", "python3")
+
 #: Used when no configuration names any. Deliberately broad: a false arm of the stop gate
 #: costs one build, a missed one costs a session that ended with red tests.
 DEFAULT_SOURCE_EXTENSIONS = (
@@ -186,6 +192,40 @@ def suggestion(root: str) -> str:
             )
 
     return ""
+
+
+def project_command(root: str, argv: list):
+    """The argv and environment that run a declared command the way the project runs it.
+
+    Only one thing is ever changed: a first word naming the Python interpreter (`python`,
+    `python3`) is replaced by the interpreter inside the project's virtual environment - a
+    `.venv` or `venv` holding `pyvenv.cfg` and that interpreter - and the environment's scripts
+    directory goes first on PATH, as if it were activated. Without that, Windows starts the
+    interpreter the hook runs on (CreateProcess searches the parent's own directory before
+    PATH), which has none of the project's packages, and the gate reports a red that is not
+    there.
+
+    Nothing is searched: no PATH lookup, no current directory, no PATHEXT. Every other command,
+    and every project without such an environment, runs exactly as declared. Trusting the
+    project's interpreter is a deliberate trade-off; see STACK.md.
+    """
+    argv, env = list(argv), dict(os.environ)
+
+    if argv[0] not in PYTHON_COMMANDS:
+        return argv, env
+
+    for name in VENV_DIRS:
+        venv = os.path.join(root, name)
+        scripts = os.path.join(venv, "Scripts" if os.name == "nt" else "bin")
+        interpreter = os.path.join(scripts, argv[0] + (".exe" if os.name == "nt" else ""))
+
+        if os.path.isfile(os.path.join(venv, "pyvenv.cfg")) and os.path.isfile(interpreter):
+            env["PATH"] = scripts + os.pathsep + env.get("PATH", "")
+            env["VIRTUAL_ENV"] = venv
+            env.pop("PYTHONHOME", None)
+            return [interpreter] + argv[1:], env
+
+    return argv, env
 
 
 def _is_argv(value) -> bool:

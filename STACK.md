@@ -23,6 +23,23 @@ Node service without knowing what either is.
 }
 ```
 
+## Which file applies
+
+The Bash guard reads the file of the repository a command **acts in** - the shell's directory,
+followed through every `cd` and `git -C` on the line - not the session's anchor. A
+subdirectory's own `.dev-factory.json` (a monorepo package, a fixture) adds to the repository's
+file, never replaces it. When a line touches several directories, the rules combine toward the
+strictest: protected branches and `blockedCommands` are united across all of them and the
+anchor, and a package manager must be permitted by every file governing the directory it runs
+in. Stepping through a directory with a laxer file, or with none, can only add restrictions.
+
+What this cannot see: a package manager aimed at another project by a path argument rather
+than by the directory it runs in (`dotnet add <other>/App.csproj package X`, `mvn -f`,
+`gradle -p`, `composer -d`, `uv pip --python <other venv>`), or pip installing into whichever
+environment happens to be active. The common pointing options (`--prefix`, `--cwd`, `--dir`,
+`--target`, `--project`, ...) are refused; the rest is the reviewer's to catch - the guard is a
+guardrail, not a sandbox (CONTRACT.md, "What the guard is, and is not").
+
 ## Fields
 
 | Field | Required | Used by | Meaning |
@@ -32,9 +49,10 @@ Node service without knowing what either is.
 | `test` | yes | `stop_gate`, gates | Argv array. Exit 0 means the suite is green |
 | `fastTest` | no | `stop_gate` | Argv array for the end-of-session check when the full suite is slow. Falls back to `test` |
 | `packageManager` | no | `guard_bash` | The one package manager this project is allowed to invoke |
-| `dependencyFiles` | no | `review-checklist` | Files whose change means a dependency changed, and therefore needs the owner's approval |
+| `dependencyFiles` | no | `review-checklist` | Files whose change means a dependency changed, and therefore must be named in the pull request |
 | `sourceExtensions` | no | `mark_dirty` | What counts as source. Editing one of these arms the stop gate |
 | `blockedCommands` | no | `guard_bash` | Extra project-specific bans. `pattern` is a Python regex, `reason` is shown to the agent |
+| `integrationBranch` | no | `guard_bash` | The branch pull requests target and the agent merges into. Default `dev`. It may not be `main`/`master` or a work-branch name; an invalid value blocks every git and gh command until the owner fixes it |
 | `notes` | no | nobody | Free text, ignored by every hook. See below |
 
 **Argv arrays, not strings.** A command string has to be parsed by a shell, and the shell is
@@ -55,6 +73,26 @@ session with a false red. That sentence is worth more in this file than in anyon
 If a project needs two commands to build, that is a script in the project, named in `build`.
 The plugin does not get a shell, on purpose: a stop gate that can run arbitrary shell is a stop
 gate that can be talked into running `true`.
+
+## A Python virtual environment is used as if activated
+
+If a command's first word is `python` or `python3`, and the repository root holds `.venv/` or
+`venv/` with a `pyvenv.cfg` and that interpreter in its `Scripts/` (Windows) or `bin/`
+directory, the stop gate and `spec-doctor` run that interpreter and put its directory first on
+`PATH`. So `["python", "-m", "pytest", "-q"]` runs with the project's packages whether or not
+the session was started with the environment activated. Without this, Windows would start the
+interpreter the hook itself runs on: `CreateProcess` searches the parent's own directory before
+`PATH`. Declare Python tools through the interpreter (`python -m pytest`), not by their script
+name; a bare `pytest` is not redirected.
+
+Nothing else changes. No command is searched for - not on `PATH`, not in the current directory,
+not with `PATHEXT` - so a `python.cmd` dropped into a repository is never run. Every other first
+word, and every project without such an environment, runs exactly as declared.
+
+The trade-off, made on purpose: the gate trusts the project's interpreter, and `.venv` is
+normally git-ignored, so a replaced interpreter would not show in a diff. That is the same trust
+the project already places in its environment to run at all; the alternative was a gate that is
+red on every Windows machine for every Python project, which teaches people to ignore it.
 
 ## Missing file: the gate blocks, it does not skip
 
@@ -85,16 +123,16 @@ the file is missing. The agent proposes, the owner confirms, the file is written
 
 ## `packageManager` and what the guard actually blocks
 
-The rule being enforced is `RULE-DEPENDENCIES`: dependency versions live in one declared file
-and change only with the owner's approval. It is not "package managers are scary".
-
-So the guard distinguishes three things:
+The rules being enforced are `RULE-DEPENDENCIES` - one package manager, versions pinned in one
+declared file - and `RULE-INSTALLS` - the project is the agent's, the machine is the owner's.
+Neither is "package managers are scary".
 
 | | Example | Verdict |
 |---|---|---|
 | Running the project's own tooling | `npm test`, `npm run build`, `dotnet build` | **allowed** |
-| Restoring already-declared dependencies | `npm ci`, `dotnet restore`, `cargo fetch` | **allowed** |
-| Adding, removing or upgrading a dependency | `npm install left-pad`, `dotnet add package X`, `pip install requests` | **blocked** |
+| Restoring already-declared dependencies | `npm ci`, `dotnet restore`, `pip install -r requirements.txt` | **allowed** |
+| Adding, removing or upgrading a dependency of the project | `npm install left-pad@1.3.0`, `dotnet add package X`, `pip install requests==2.32.3` | **allowed** - the exact version goes into the declared file in the same change |
+| Installing for the whole machine | `npm i -g`, `pip install --user`, `cargo install`, `go install`, `pipx install`, `dotnet tool install -g`, `dotnet workload install` | **blocked** - the owner's checklist |
 
 Any package manager that is **not** the declared `packageManager` is blocked outright. A .NET
 project has no business running `pip`, and a Node project has none running `cargo`; if it turns
