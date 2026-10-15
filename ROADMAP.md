@@ -5,28 +5,30 @@
 | # | Piece | State |
 |---|---|---|
 | 1 | `CONTRACT.md` + rule identifiers | done |
-| 2 | `.dev-factory.json` + three stack-independent hooks | done — 30 tests, every guard proven by mutation |
-| 3 | `spec-doctor` | in progress |
-| 4 | Migrate the first project onto the contract | done - spec-doctor green, reviewed to APPROVE after one BLOCK |
-| 5 | Move the skills and agents in | done - three skills, three agents, all stack-independent |
+| 2 | `.dev-factory.json` + stack-independent hooks | done — every guard proven by mutation |
+| 3 | `spec-doctor` | done |
+| 4 | Migrate the original project onto the contract | done — spec-doctor green, reviewed to APPROVE after one BLOCK |
+| 5 | Move the skills and agents in | done — three skills, three agents, all stack-independent |
+| 6 | `mutate.py` and `ship.py` | done — the plugin's own guards mutation-proven with `mutate.py` |
 
-Step 4 was not optional, and it earned its cost: the review of that migration found five
-defects, three of which are recorded below because they change what the plugin should do.
+207 tests in total. Step 4 was not optional, and it earned its cost: the review of that
+migration found five defects, three of which are recorded below because they change what the
+plugin should do.
 
-**Where the next mistakes get found.** Not on that project - it is finished. From here the
-plugin is exercised on new applications, and what they break is what gets fixed.
+**Where the next mistakes get found.** On new applications: the plugin is exercised on each new
+project, and what they break is what gets fixed.
 
 ---
 
-## Paid for by the first migration
+## Lessons learned from the first migration
 
-Three things the migration of the first project taught, at the cost of one BLOCK verdict. They
-are here rather than in a commit message because each one changes what the plugin should do.
+Three things the migration taught, at the cost of one BLOCK verdict. They are here rather than
+in a commit message because each one changes what the plugin should do.
 
 **A scan that reports completeness must say what it could not see.** The migration's own scan
 matched `\brule \d\b` — case-sensitively, and in English. It therefore never saw `Rule 5` at
-the start of a sentence, nor twenty-four `правило N` citations in a specification written in
-Russian, ten of which were live normative text. The decision record then stated a count and the
+the start of a sentence, nor twenty-four rule citations in a part of the specification written
+in another language, ten of which were live normative text. The decision record then stated a count and the
 word "all". Both were wrong. Search case-insensitively, in every language the document uses, and
 report the pattern alongside the number.
 
@@ -71,10 +73,10 @@ becomes impossible to consume silently rather than merely unlikely.
 **The grid is for navigation, never for judgment.** Finding *where* to look: the grid. Deciding
 *whether the code is right*: the actual lines.
 
-Not one real defect in the first project was visible at the level of "class X has method Y" —
-not the arc test run against a straight wall, not the grid drawn at a constant while every tool
-snapped to a different step, not the redo shortcut sitting unreachable behind an earlier switch
-case. A review conducted over summaries finds only the defects a summary can express.
+Not one real defect in the original project was visible at the level of "class X has method
+Y" — not the test whose input never reached the branch it was named for, not a value drawn from
+a constant while every caller used a different one, not the keyboard shortcut sitting
+unreachable behind an earlier switch case. A review conducted over summaries finds only the defects a summary can express.
 
 ### When
 

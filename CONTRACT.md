@@ -21,8 +21,8 @@ be numbered, renumbered or unnumbered; the plugin never looks at a number. It gr
 The same reasoning keeps the contract keyed on ASCII identifiers and a handful of English
 keyword anchors, never on headings. Identifier-keying is robust against any prose — and the
 prose itself is governed by `RULE-ENGLISH-ONLY`: every repository artifact is written in
-English. (The first project predates that rule and its spec is in Russian; it is the reason
-the rule exists as a named core rule rather than an assumption.)
+English. (An earlier project predates that rule and its documents are not in English; it is
+the reason the rule exists as a named core rule rather than an assumption.)
 
 ---
 
@@ -84,19 +84,20 @@ is the project's; the meaning is fixed here. Rules the hooks enforce are marked.
 
 ### Why `RULE-MUTATION-PROOF` is core
 
-It is the most expensive lesson of the first project and the only one that would not survive
-being left in a `DECISIONS.md`. Across three phases, eleven tests were found that were named
-for behaviour they could not observe — an arc test on a straight wall, a print-mode test whose
-palette painted the grid invisible either way, an assertion comparing a call with itself. Every
-one of them was green. Every one of them was found only because somebody went looking.
+It is the most expensive lesson the process has paid for and the only one that would not
+survive being left in a `DECISIONS.md`. Across three phases, eleven tests were found that were
+named for behaviour they could not observe — a test whose input never reached the branch it was
+named for, a rendering test whose output was identical either way, an assertion comparing a
+call with itself. Every one of them was green. Every one of them was found only because
+somebody went looking.
 
 Mutating the line a test is named for is the cheapest way to ask "would this notice?", and the
 answer is written down rather than assumed.
 
 ### Why `RULE-ENGLISH-ONLY` is core
 
-A repository is shown to people. The first project shipped commits, docs and code comments in
-Russian, and the owner's verdict was that none of it could be shown to anyone. The rule was
+A repository is shown to people. An earlier project shipped commits, docs and code comments in
+a language its future readers do not share, which made the whole history unshowable. The rule was
 then stated once per project and forgotten once per project — which is exactly the kind of
 lesson this contract exists to hold. So it is core: `spec-doctor` checks the required
 documents for non-English text mechanically, and the reviewer blocks a diff that introduces it
@@ -220,7 +221,7 @@ a bug in the guard never bricks an unrelated command.
 
 ### Why `RULE-REVIEW` is core, and what the hook can actually prove
 
-The cycle that produced the first project was *gate, review, fix or approve, commit*. Until this
+The cycle this process grew out of was *gate, review, fix or approve, commit*. Until this
 rule existed, none of that was in the contract: `RULE-PHASE-GATE` required a summary and a wait
 for approval, and a repository could be built, gated and committed without anything ever being
 reviewed while `spec-doctor` reported that the contract was satisfied.
@@ -228,12 +229,12 @@ reviewed while `spec-doctor` reported that the contract was satisfied.
 Four things are load-bearing and none of them survives being left implicit:
 
 - **A clean context.** A reviewer who has read the implementation session inherits its blind
-  spots along with its confidence. In the first project, adversarial review with a fresh
-  context arrived at Phase 6 and immediately found eleven tests that were named for behaviour
-  they could not observe. Same-context review, over five earlier phases, had found none of them.
-- **The summary is not evidence.** Claims are re-derived from the diff. The author of that
-  project wrote four confidently false statements about their own tests, each of which survived
-  until somebody re-ran the thing being claimed.
+  spots along with its confidence. When adversarial review with a fresh context was first
+  introduced, late in a project, it immediately found eleven tests that were named for behaviour
+  they could not observe. Same-context review, over the five phases before it, had found none.
+- **The summary is not evidence.** Claims are re-derived from the diff. In the same project the
+  implementing agent made four confidently false statements about its own tests, each of which
+  survived until somebody re-ran the thing being claimed.
 - **Two words, not a paragraph.** `APPROVE` or `BLOCK`. "Good overall, a few notes" is how
   findings get lost.
 - **A `BLOCK` stops the work.** Otherwise the review is decoration.
