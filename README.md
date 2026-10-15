@@ -1,6 +1,9 @@
 # dev-factory
 
-A development process as an installable plugin. The process lives here; the projects it is
+[![ci](https://github.com/OlgaAntonikova/dev-factory/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/OlgaAntonikova/dev-factory/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+A [Claude Code](https://claude.com/claude-code) plugin: a development process as an installable plugin. The process lives here; the projects it is
 used on stay clean of it.
 
 - **Knowledge** in skills — how to write a spec, how to run a build loop, how to review.
@@ -12,8 +15,8 @@ A new application is then: a new repository, this plugin installed, and a spec.
 
 ## Status
 
-**0.3.0 — under construction.** Extracted from a first project that ran nine phases under this
-process. What exists so far:
+**0.3.0.** Extracted from a real project that ran nine phases under this process, and used on
+the projects since. What exists:
 
 | Piece | State |
 |---|---|
@@ -29,6 +32,18 @@ process. What exists so far:
 | Migration of the first project onto the contract | **done** — `spec-doctor` green, reviewed to APPROVE |
 
 207 tests. The guards of the hooks have each been mutated and watched to fail, and so have those of the two newest tools, using `tools/mutate.py` on itself. See `ROADMAP.md`.
+
+## Installing
+
+In Claude Code:
+
+```text
+/plugin marketplace add OlgaAntonikova/dev-factory
+/plugin install dev-factory@dev-factory
+```
+
+Then give each project a `.dev-factory.json` with its build and test commands (see
+[`STACK.md`](STACK.md)). Until it exists, the stop gate blocks instead of guessing.
 
 ## Requirements
 
@@ -53,9 +68,9 @@ that fails stops the run and names the kept copy. Without
 a command after `--`, the project's `fastTest` (else `test`) runs.
 
 ```bash
-python3 tools/mutate.py --root /path/to/project --file app/rates/ecb.py \
-    --find "if effective > today:" --replace "if False:" \
-    -- python -m pytest -q tests/test_ecb_provider.py
+python3 tools/mutate.py --root /path/to/project --file src/app/limits.py \
+    --find "if amount > limit:" --replace "if False:" \
+    -- python -m pytest -q tests/test_limits.py
 ```
 
 Ship a reviewed, committed work branch (`RULE-GIT`): push, open or reuse the pull request into
@@ -137,3 +152,7 @@ disagrees. It warns; it never blocks.
 
 The project layer stays in the project repository: `CLAUDE.md`, the spec itself, domain-specific
 skills, concrete stack versions, end-to-end configuration.
+
+## License
+
+[MIT](LICENSE)

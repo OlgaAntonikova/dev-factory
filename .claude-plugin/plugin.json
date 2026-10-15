@@ -3,12 +3,16 @@
   "version": "0.3.0",
   "description": "A development process as an installable plugin: knowledge in skills, law in hooks, roles in agents. Stack-independent; each repository declares its own build and test commands in .dev-factory.json.",
   "author": {
-    "name": "Lyoli"
+    "name": "Olga Antonikova",
+    "url": "https://github.com/OlgaAntonikova"
   },
   "keywords": [
     "process",
     "spec-driven",
     "code-review",
     "quality-gate"
-  ]
+  ],
+  "homepage": "https://github.com/OlgaAntonikova/dev-factory",
+  "repository": "https://github.com/OlgaAntonikova/dev-factory",
+  "license": "MIT"
 }
