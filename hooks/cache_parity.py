@@ -9,7 +9,9 @@ found in the field: a reviewer cited an encoding bug in the cached
 review_gate.py that the source had already fixed.
 
 The durable habit is bumping the version in .claude-plugin/plugin.json on
-every change under hooks/, tools/, skills/ or agents/; this hook is the
+every change to anything this hook compares - COMPARED_DIRS and
+COMPARED_FILES below, deliberately not listed here, so that this sentence
+cannot fall behind the set it describes; this hook is the
 tripwire for the sessions in between - it compares the running plugin root
 with the cache entry of the same version and names every file that disagrees.
 
@@ -22,7 +24,7 @@ import sys
 
 #: What readers actually consult: the law, the tools, the knowledge, the
 #: roles, the contract. Tests and the roadmap can lag without misleading.
-COMPARED_DIRS = ("hooks", "tools", "skills", "agents")
+COMPARED_DIRS = ("hooks", "tools", "skills", "agents", "commands")
 COMPARED_FILES = ("CONTRACT.md", "STACK.md", os.path.join(".claude-plugin", "plugin.json"))
 IGNORED_DIRS = {"__pycache__"}
 MAX_LISTED = 10

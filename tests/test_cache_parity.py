@@ -79,14 +79,14 @@ class StaleEntriesTests(unittest.TestCase):
         # Each directory in the compared set gets a real divergence; a set
         # silently narrowed to hooks/ fails here on the first missing entry.
         self.populate_both()
-        for rel_dir in ("hooks", "tools", "skills", "agents"):
+        for rel_dir in ("hooks", "tools", "skills", "agents", "commands"):
             write(self.source, os.path.join(rel_dir, "drifted.txt"), "new\n")
             write(self.cache, os.path.join(rel_dir, "drifted.txt"), "old\n")
 
         entries = cache_parity.stale_entries(self.source, self.cache)
 
         reported = {rel for rel, _ in entries}
-        for rel_dir in ("hooks", "tools", "skills", "agents"):
+        for rel_dir in ("hooks", "tools", "skills", "agents", "commands"):
             self.assertIn(f"{rel_dir}/drifted.txt", reported)
 
     def test_every_compared_top_level_file_is_actually_compared(self):
