@@ -10,8 +10,9 @@
 | 4 | Migrate the original project onto the contract | done — spec-doctor green, reviewed to APPROVE after one BLOCK |
 | 5 | Move the skills and agents in | done — three skills, three agents, all stack-independent |
 | 6 | `mutate.py` and `ship.py` | done — the plugin's own guards mutation-proven with `mutate.py` |
+| 7 | Slash commands - `init`, `spec`, `phase`, `review`, `ship`, `gate`, `doctor` | done - every plugin path (`${CLAUDE_PLUGIN_ROOT}/...`), agent, skill, command and script flag they name is checked by `tests/test_commands.py`; cited section names are not |
 
-207 tests in total. Step 4 was not optional, and it earned its cost: the review of that
+215 tests in total. Step 4 was not optional, and it earned its cost: the review of that
 migration found five defects, three of which are recorded below because they change what the
 plugin should do.
 

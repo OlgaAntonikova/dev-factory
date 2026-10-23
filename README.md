@@ -15,7 +15,7 @@ A new application is then: a new repository, this plugin installed, and a spec.
 
 ## Status
 
-**0.3.0.** Extracted from a real project that ran nine phases under this process, and used on
+**0.4.0.** Extracted from a real project that ran nine phases under this process, and used on
 the projects since. What exists:
 
 | Piece | State |
@@ -29,9 +29,10 @@ the projects since. What exists:
 | `tools/ship.py` — push, pull request, CI, merge, each command judged by the guard | **written** |
 | `skills/` | **moved in** — `spec-writing`, `build-loop`, `review-checklist` |
 | `agents/` | **moved in** — `reviewer` (opus), `scout` (haiku), `verifier` (opus) |
+| `commands/` | **written** — `init`, `spec`, `phase`, `review`, `ship`, `gate`, `doctor` |
 | Migration of the first project onto the contract | **done** — `spec-doctor` green, reviewed to APPROVE |
 
-207 tests. The guards of the hooks have each been mutated and watched to fail, and so have those of the two newest tools, using `tools/mutate.py` on itself. See `ROADMAP.md`.
+215 tests. The guards of the hooks have each been mutated and watched to fail, and so have those of the two newest tools, using `tools/mutate.py` on itself. See `ROADMAP.md`.
 
 ## Installing
 
@@ -142,7 +143,7 @@ install runs straight from this repository, and nothing refreshes the cached cop
 silently disagree. This happened: a reviewer cited an encoding bug in the cached
 `review_gate.py` that the source had already fixed.
 
-So: **any change under `hooks/`, `tools/`, `skills/` or `agents/` bumps the version in
+So: **any change under `hooks/`, `tools/`, `skills/`, `agents/` or `commands/` bumps the version in
 `.claude-plugin/plugin.json`** — that is what makes the cache refresh on reinstall. The
 `cache_parity.py` SessionStart hook is the tripwire for the sessions in between: it compares
 the running plugin root with the cache entry of the same version and names every file that
